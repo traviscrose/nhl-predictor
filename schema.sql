@@ -32,3 +32,17 @@ CREATE TABLE IF NOT EXISTS betting_odds (
     moneyline_away INT,
     over_under FLOAT
 );
+
+-- Player stats table
+CREATE TABLE IF NOT EXISTS player_stats (
+    player_id INT REFERENCES players(player_id),
+    game_id INT REFERENCES games(game_id),
+    team_id INT REFERENCES teams(team_id),
+    goals INT,
+    assists INT,
+    points INT,
+    shots INT,
+    hits INT,
+    time_on_ice TEXT,
+    PRIMARY KEY (player_id, game_id)
+);
