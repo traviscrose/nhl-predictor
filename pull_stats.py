@@ -2,6 +2,7 @@ import requests
 import psycopg2
 from datetime import date
 import os
+from urllib.parse import urlparse
 
 
 # Get DATABASE_URL from environment
