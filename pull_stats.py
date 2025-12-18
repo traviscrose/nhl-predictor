@@ -39,17 +39,30 @@ teams_response = requests.get(teams_url).json()
 teams_data = teams_response.get("data", [])
 
 for team in teams_data:
-    cur.execute("""
-        INSERT INTO teams (id, name, abbreviation)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (id) DO UPDATE
-        SET name = EXCLUDED.name,
-            abbreviation = EXCLUDED.abbreviation
-    """, (
-        team.get('id'),
-        team.get('fullName'),
-        team.get('rawTricode')
-    ))
+    team_id = team.get('id')
+    name = team.get('fullName')
+    abbr = team.get('rawTricode')
+
+    # Does this team already exist?
+    cur.execute(
+        "SELECT 1 FROM teams WHERE id = %s",
+        (team_id,)
+    )
+
+    if cur.fetchone():
+        # Update existing team (rebrand-safe)
+        cur.execute("""
+            UPDATE teams
+            SET name = %s,
+                abbreviation = %s
+            WHERE id = %s
+        """, (name, abbr, team_id))
+    else:
+        # Insert new team
+        cur.execute("""
+            INSERT INTO teams (id, name, abbreviation)
+            VALUES (%s, %s, %s)
+        """, (team_id, name, abbr))
 
 conn.commit()
 print("Teams inserted / updated successfully.")
