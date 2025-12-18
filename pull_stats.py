@@ -43,6 +43,10 @@ for team in teams_data:
         INSERT INTO teams (id, name, abbreviation)
         VALUES (%s, %s, %s)
         ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (abbreviation) DO UPDATE
+        SET name = EXCLUDED.name,
+            id = EXCLUDED.id
+            abbreviation = EXCLUDED.abbreviation
     """, (
         team.get('id'),
         team.get('fullName'),
