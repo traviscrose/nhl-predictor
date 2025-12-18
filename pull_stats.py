@@ -40,14 +40,13 @@ teams_data = teams_response.get("data", [])
 
 for team in teams_data:
     cur.execute("""
-        INSERT INTO teams (id, name, abbreviation, venue)
+        INSERT INTO teams (id, name, abbreviation)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (team_id) DO NOTHING
     """, (
         team.get('teamId'),
         team.get('name'),
-        team.get('abbreviation'),
-        team.get('venueName', 'Unknown')  # Some endpoints provide venue
+        team.get('abbreviation')
     ))
 conn.commit()
 print("Teams inserted successfully.")
