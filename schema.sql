@@ -2,8 +2,10 @@
 CREATE TABLE IF NOT EXISTS teams (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    abbreviation TEXT NOT NULL UNIQUE
+    abbreviation TEXT NOT NULL
 );
+
+ALTER TABLE teams DROP CONSTRAINT teams_abbreviation_key;
 
 -- Players table
 CREATE TABLE IF NOT EXISTS players (
