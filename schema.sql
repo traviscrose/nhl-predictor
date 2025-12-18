@@ -35,9 +35,9 @@ CREATE TABLE IF NOT EXISTS betting_odds (
 
 -- Player stats table
 CREATE TABLE IF NOT EXISTS player_stats (
-    player_id INT REFERENCES players(player_id),
-    game_id INT REFERENCES games(game_id),
-    team_id INT REFERENCES teams(team_id),
+    player_id INT REFERENCES players(id),
+    game_id INT REFERENCES games(id),
+    team_id INT REFERENCES teams(id),
     goals INT,
     assists INT,
     points INT,
