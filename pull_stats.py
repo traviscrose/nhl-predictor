@@ -42,15 +42,17 @@ for team in teams_data:
     cur.execute("""
         INSERT INTO teams (id, name, abbreviation)
         VALUES (%s, %s, %s)
-        ON CONFLICT (id) DO NOTHING
-        ON CONFLICT (abbreviation) DO NOTHING
+        ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name,
+            abbreviation = EXCLUDED.abbreviation
     """, (
         team.get('id'),
         team.get('fullName'),
         team.get('rawTricode')
     ))
+
 conn.commit()
-print("Teams inserted successfully.")
+print("Teams inserted / updated successfully.")
 
 # =======================
 # 2. Insert Players
