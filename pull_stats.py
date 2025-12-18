@@ -44,9 +44,9 @@ for team in teams_data:
         VALUES (%s, %s, %s)
         ON CONFLICT (id) DO NOTHING
     """, (
-        team.get('teamId'),
-        team.get('name'),
-        team.get('abbreviation')
+        team.get('id'),
+        team.get('fullName'),
+        team.get('rawTricode')
     ))
 conn.commit()
 print("Teams inserted successfully.")
