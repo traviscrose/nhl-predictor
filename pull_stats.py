@@ -1,6 +1,8 @@
 import requests
 import psycopg2
 from datetime import date
+import os
+
 
 # Get DATABASE_URL from environment
 DATABASE_URL = os.environ.get("DATABASE_URL")
