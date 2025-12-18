@@ -41,8 +41,8 @@ teams_data = teams_response.get("data", [])
 for team in teams_data:
     cur.execute("""
         INSERT INTO teams (id, name, abbreviation)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (team_id) DO NOTHING
+        VALUES (%s, %s, %s)
+        ON CONFLICT (id) DO NOTHING
     """, (
         team.get('teamId'),
         team.get('name'),
@@ -62,7 +62,7 @@ for player in players_data:
     cur.execute("""
         INSERT INTO players (id, team_id, full_name, position)
         VALUES (%s, %s, %s, %s)
-        ON CONFLICT (player_id) DO NOTHING
+        ON CONFLICT (id) DO NOTHING
     """, (
         player.get('playerId'),
         player.get('teamId'),
