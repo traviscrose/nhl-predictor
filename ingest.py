@@ -93,7 +93,7 @@ def ingest_schedule(start_date, end_date):
                     game["season"]
                 ))
 
-                print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({game_state})")
+                print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({status})")
                 total_inserted += 1
 
         # Move to nextStartDate for next iteration
