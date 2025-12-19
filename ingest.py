@@ -1,20 +1,27 @@
 from db import get_conn
-from nhl_api import get_schedule_for_date
-from datetime import date, datetime, timedelta
+import requests
+from datetime import date, timedelta, datetime
 
+BASE_URL = "https://api-web.nhle.com/v1"
 SEASON_START = date(2025, 10, 7)
-SEASON_END = date.today()  # Or the fixed final date for the season
+SEASON_END = date.today()  # or fixed season end
 
 def daterange(start: date, end: date):
-    """
-    Yield each date from start to end inclusive.
-    """
+    """Yield each date from start to end inclusive."""
     curr = start
     while curr <= end:
         yield curr
         curr += timedelta(days=1)
 
+def get_schedule_for_date(date_str: str):
+    """Fetch NHL schedule for a specific YYYY-MM-DD date."""
+    url = f"{BASE_URL}/schedule/{date_str}"
+    r = requests.get(url, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
 def upsert_team(cur, name, abbreviation):
+    """Upsert a team and return its ID."""
     cur.execute("""
         INSERT INTO teams (name, abbreviation)
         VALUES (%s, %s)
@@ -35,34 +42,36 @@ def ingest_backfill():
         try:
             schedule = get_schedule_for_date(date_str)
         except requests.exceptions.HTTPError as e:
-            # No schedule for this date? Just skip
-            print(f"Skipping {date_str}: {e}")
+            print(f"Skipping {date_str}: HTTPError {e}")
             continue
 
-        # NHL schedule returns a list of gameWeek objects sometimes;
-        # for date-specific endpoints you’ll see a “dates” array instead
-        games_data = schedule.get("dates", [])  # usually an array
+        # Handle both 'dates' and deprecated 'gameWeek'
+        games_data = schedule.get("dates", [])
+        if not games_data and "gameWeek" in schedule:
+            games_data = [{"games": schedule["gameWeek"]}]
+
         if not games_data:
-            # Fallback if API returns gameWeek instead
-            games_data = [{"games": schedule.get("gameWeek", [])}]
+            print(f"No games found for {date_str}")
+            continue
 
         for day in games_data:
             for game in day.get("games", []):
                 if game.get("gameState") != "FINAL":
-                    continue
+                    continue  # skip non-final games
 
                 nhl_game_id = game["id"]
 
-                # Skip duplicates
+                # Skip if already ingested
                 cur.execute("SELECT 1 FROM games WHERE nhl_game_id=%s", (nhl_game_id,))
                 if cur.fetchone():
+                    print(f"Skipping already ingested game {nhl_game_id}")
                     continue
 
                 # Upsert teams
                 home = game["homeTeam"]
                 away = game["awayTeam"]
 
-                for t in (home, away):
+                for t in [home, away]:
                     abbr = t["abbrev"]
                     if abbr not in team_cache:
                         team_cache[abbr] = upsert_team(cur, t["name"], abbr)
@@ -89,11 +98,15 @@ def ingest_backfill():
                     game["season"],
                 ))
 
+                print(f"Inserted game {nhl_game_id}: {home['abbrev']} vs {away['abbrev']}, {home['score']}-{away['score']}")
                 total_inserted += 1
 
-        # Save after each date to avoid large uncommitted batches
+        # Commit after each day
         conn.commit()
 
     cur.close()
     conn.close()
     print(f"Backfill finished: inserted {total_inserted} new games.")
+
+if __name__ == "__main__":
+    ingest_backfill()
