@@ -7,21 +7,18 @@ SEASON_START = date(2025, 10, 7)
 SEASON_END = date.today()  # or fixed season end
 
 def daterange(start: date, end: date):
-    """Yield each date from start to end inclusive."""
     curr = start
     while curr <= end:
         yield curr
         curr += timedelta(days=1)
 
 def get_schedule_for_date(date_str: str):
-    """Fetch NHL schedule for a specific YYYY-MM-DD date."""
     url = f"{BASE_URL}/schedule/{date_str}"
     r = requests.get(url, timeout=10)
     r.raise_for_status()
     return r.json()
 
 def upsert_team(cur, name, abbreviation):
-    """Upsert a team and return its ID."""
     cur.execute("""
         INSERT INTO teams (name, abbreviation)
         VALUES (%s, %s)
@@ -45,21 +42,19 @@ def ingest_backfill():
             print(f"Skipping {date_str}: HTTPError {e}")
             continue
 
-        # Handle both 'dates' and deprecated 'gameWeek'
-        games_data = schedule.get("dates", [])
-        if not games_data and "gameWeek" in schedule:
-            games_data = [{"games": schedule["gameWeek"]}]
-
-        if not games_data:
+        # Navigate current API JSON structure
+        dates = schedule.get("data", {}).get("schedule", {}).get("dates", [])
+        if not dates:
             print(f"No games found for {date_str}")
             continue
 
-        for day in games_data:
+        for day in dates:
             for game in day.get("games", []):
-                if game.get("gameState") != "FINAL":
-                    continue  # skip non-final games
+                status = game.get("status", {}).get("detailedState")
+                if status != "Final":
+                    continue  # only insert completed games
 
-                nhl_game_id = game["id"]
+                nhl_game_id = game["gamePk"]
 
                 # Skip if already ingested
                 cur.execute("SELECT 1 FROM games WHERE nhl_game_id=%s", (nhl_game_id,))
@@ -67,17 +62,21 @@ def ingest_backfill():
                     print(f"Skipping already ingested game {nhl_game_id}")
                     continue
 
+                # Extract home/away teams
+                home_team_info = game["teams"]["home"]["team"]
+                away_team_info = game["teams"]["away"]["team"]
+                home_score = game["teams"]["home"]["score"]
+                away_score = game["teams"]["away"]["score"]
+
                 # Upsert teams
-                home = game["homeTeam"]
-                away = game["awayTeam"]
-
-                for t in [home, away]:
-                    abbr = t["abbrev"]
+                for t in [(home_team_info["name"], home_team_info["abbreviation"]),
+                          (away_team_info["name"], away_team_info["abbreviation"])]:
+                    name, abbr = t
                     if abbr not in team_cache:
-                        team_cache[abbr] = upsert_team(cur, t["name"], abbr)
+                        team_cache[abbr] = upsert_team(cur, name, abbr)
 
-                home_team_id = team_cache[home["abbrev"]]
-                away_team_id = team_cache[away["abbrev"]]
+                home_team_id = team_cache[home_team_info["abbreviation"]]
+                away_team_id = team_cache[away_team_info["abbreviation"]]
 
                 # Insert game
                 cur.execute("""
@@ -89,19 +88,19 @@ def ingest_backfill():
                     ON CONFLICT (nhl_game_id) DO NOTHING
                 """, (
                     nhl_game_id,
-                    datetime.strptime(game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"),
+                    datetime.strptime(game["gameDate"], "%Y-%m-%dT%H:%M:%SZ"),
                     home_team_id,
                     away_team_id,
-                    home["score"],
-                    away["score"],
-                    game["gameState"].lower(),
-                    game["season"],
+                    home_score,
+                    away_score,
+                    status.lower(),
+                    game.get("season")
                 ))
 
-                print(f"Inserted game {nhl_game_id}: {home['abbrev']} vs {away['abbrev']}, {home['score']}-{away['score']}")
+                print(f"Inserted game {nhl_game_id}: {home_team_info['abbreviation']} vs {away_team_info['abbreviation']}, {home_score}-{away_score}")
                 total_inserted += 1
 
-        # Commit after each day
+        # Commit after each date
         conn.commit()
 
     cur.close()
