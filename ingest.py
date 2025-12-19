@@ -3,7 +3,7 @@ import requests
 from datetime import date, timedelta, datetime
 
 BASE_URL = "https://api-web.nhle.com/v1"
-SEASON_START = date(2025, 10, 7)
+SEASON_START = date(2024, 10, 10)
 SEASON_END = date.today()  # or fixed season end
 
 def daterange(start: date, end: date):
@@ -28,11 +28,11 @@ def upsert_team(cur, name, abbreviation):
     """, (name, abbreviation))
     return cur.fetchone()['id']
 
-def ingest_backfill():
+def ingest_season():
     conn = get_conn()
     cur = conn.cursor()
     team_cache = {}
-    total_inserted = 0
+    inserted_games = 0
 
     for single_date in daterange(SEASON_START, SEASON_END):
         date_str = single_date.isoformat()
@@ -42,27 +42,20 @@ def ingest_backfill():
             print(f"Skipping {date_str}: HTTPError {e}")
             continue
 
-        # Navigate current API JSON structure
-        dates = schedule.get("data", {}).get("schedule", {}).get("dates", [])
-        if not dates:
+        # The games for that date
+        dates_list = schedule.get("data", {}).get("schedule", {}).get("dates", [])
+        if not dates_list:
             print(f"No games found for {date_str}")
             continue
 
-        for day in dates:
+        for day in dates_list:
             for game in day.get("games", []):
+                nhl_game_id = game["id"]
                 status = game.get("status", {}).get("detailedState")
+
                 if status != "Final":
-                    continue  # only insert completed games
+                    continue  # only insert final games
 
-                nhl_game_id = game["gamePk"]
-
-                # Skip if already ingested
-                cur.execute("SELECT 1 FROM games WHERE nhl_game_id=%s", (nhl_game_id,))
-                if cur.fetchone():
-                    print(f"Skipping already ingested game {nhl_game_id}")
-                    continue
-
-                # Extract home/away teams
                 home_team_info = game["teams"]["home"]["team"]
                 away_team_info = game["teams"]["away"]["team"]
                 home_score = game["teams"]["home"]["score"]
@@ -77,6 +70,12 @@ def ingest_backfill():
 
                 home_team_id = team_cache[home_team_info["abbreviation"]]
                 away_team_id = team_cache[away_team_info["abbreviation"]]
+
+                # Skip duplicates
+                cur.execute("SELECT 1 FROM games WHERE nhl_game_id=%s", (nhl_game_id,))
+                if cur.fetchone():
+                    print(f"Skipping already ingested game {nhl_game_id}")
+                    continue
 
                 # Insert game
                 cur.execute("""
@@ -98,14 +97,14 @@ def ingest_backfill():
                 ))
 
                 print(f"Inserted game {nhl_game_id}: {home_team_info['abbreviation']} vs {away_team_info['abbreviation']}, {home_score}-{away_score}")
-                total_inserted += 1
+                inserted_games += 1
 
-        # Commit after each date
+        # Commit per day
         conn.commit()
 
     cur.close()
     conn.close()
-    print(f"Backfill finished: inserted {total_inserted} new games.")
+    print(f"Finished ingestion: inserted {inserted_games} new games.")
 
 if __name__ == "__main__":
-    ingest_backfill()
+    ingest_season()
