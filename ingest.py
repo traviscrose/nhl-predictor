@@ -1,10 +1,23 @@
+from db import get_conn
 import requests
 from datetime import datetime
-from db import get_conn
 
 BASE_URL = "https://api-web.nhle.com/v1/schedule"
 
-def ingest_season(start_date, end_date):
+def upsert_team(cur, name, abbreviation):
+    """
+    Insert or update a team and return its ID.
+    """
+    cur.execute("""
+        INSERT INTO teams (name, abbreviation)
+        VALUES (%s, %s)
+        ON CONFLICT (abbreviation) DO UPDATE
+        SET name = EXCLUDED.name
+        RETURNING id
+    """, (name, abbreviation))
+    return cur.fetchone()['id']
+
+def ingest_schedule(start_date, end_date):
     conn = get_conn()
     cur = conn.cursor()
     team_cache = {}
@@ -23,24 +36,18 @@ def ingest_season(start_date, end_date):
         for day in schedule.get("gameWeek", []):
             for game in day.get("games", []):
                 nhl_game_id = game["id"]
-                status = game["gameState"]
+                game_state = game["gameState"]  # OFF, LIVE, Final
 
-                if status != "Final":
-                    continue
+                # Determine scores: only if Final, otherwise NULL
+                home_score = game["homeTeam"]["score"] if game_state == "Final" else None
+                away_score = game["awayTeam"]["score"] if game_state == "Final" else None
 
                 # Upsert teams
                 for t in [game["homeTeam"], game["awayTeam"]]:
                     abbrev = t["abbrev"]
                     name = t["commonName"]["default"]
                     if abbrev not in team_cache:
-                        cur.execute("""
-                            INSERT INTO teams (name, abbreviation)
-                            VALUES (%s,%s)
-                            ON CONFLICT (abbreviation) DO UPDATE
-                            SET name = EXCLUDED.name
-                            RETURNING id
-                        """, (name, abbrev))
-                        team_cache[abbrev] = cur.fetchone()['id']
+                        team_cache[abbrev] = upsert_team(cur, name, abbrev)
 
                 home_team_id = team_cache[game["homeTeam"]["abbrev"]]
                 away_team_id = team_cache[game["awayTeam"]["abbrev"]]
@@ -50,6 +57,7 @@ def ingest_season(start_date, end_date):
                 if cur.fetchone():
                     continue
 
+                # Insert game
                 cur.execute("""
                     INSERT INTO games (
                         nhl_game_id, date, home_team_id, away_team_id,
@@ -62,25 +70,26 @@ def ingest_season(start_date, end_date):
                     datetime.strptime(game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"),
                     home_team_id,
                     away_team_id,
-                    game["homeTeam"]["score"],
-                    game["awayTeam"]["score"],
-                    status.lower(),
+                    home_score,
+                    away_score,
+                    game_state.lower(),
                     game["season"]
                 ))
+
+                print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({game_state})")
                 total_inserted += 1
 
-        conn.commit()
-
-        # Advance to next date returned by the API
+        # Advance to nextStartDate if provided
         next_date = schedule.get("nextStartDate")
         if not next_date or next_date > end_date:
             break
         current_date = next_date
 
+    conn.commit()
     cur.close()
     conn.close()
-    print(f"Inserted {total_inserted} new games.")
+    print(f"Finished ingestion: inserted {total_inserted} new games.")
 
-# Example usage
 if __name__ == "__main__":
-    ingest_season("2025-10-07", "2025-12-19")
+    # Example: ingest upcoming and past games for the season
+    ingest_schedule("2025-10-07", "2025-12-19")
