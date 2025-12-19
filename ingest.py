@@ -1,19 +1,14 @@
 from db import get_conn
-import requests
+from nhl_api import get_schedule
 from datetime import date, datetime
 
-BASE_URL = "https://statsapi.web.nhl.com/api/v1"
-
-SEASON_START = "2025-10-07"
-SEASON_END = date.today().isoformat()  # or "2025-04-13" for full season
-
-def get_schedule(start_date, end_date):
-    url = f"{BASE_URL}/schedule?startDate={start_date}&endDate={end_date}"
-    r = requests.get(url, timeout=10)
-    r.raise_for_status()
-    return r.json()
+SEASON_START = "2024-10-10"  # adjust for the NHL season
+SEASON_END = date.today().isoformat()  # or fixed end like "2025-04-13"
 
 def upsert_team(cur, name, abbreviation):
+    """
+    Upsert a team; returns its ID.
+    """
     cur.execute("""
         INSERT INTO teams (name, abbreviation)
         VALUES (%s, %s)
@@ -24,36 +19,38 @@ def upsert_team(cur, name, abbreviation):
     return cur.fetchone()['id']
 
 def ingest_season(start_date=SEASON_START, end_date=SEASON_END):
-    schedule_data = get_schedule(start_date, end_date)
+    """
+    Backfill NHL games from start_date to end_date into Postgres.
+    """
+    schedule = get_schedule(start_date, end_date)
     conn = get_conn()
     cur = conn.cursor()
-
     team_cache = {}
     inserted_games = 0
 
-    for date_block in schedule_data.get("dates", []):
-        for game in date_block.get("games", []):
-            if game["status"]["detailedState"] != "Final":
+    for day in schedule.get("dates", []):
+        for game in day.get("games", []):
+            if game.get("gameState") != "FINAL":
                 continue
 
-            nhl_game_id = game["gamePk"]
+            nhl_game_id = game["id"]
 
-            # Skip if already ingested
+            # Skip already ingested
             cur.execute("SELECT 1 FROM games WHERE nhl_game_id=%s", (nhl_game_id,))
             if cur.fetchone():
                 continue
 
-            # Teams
-            home = game["teams"]["home"]
-            away = game["teams"]["away"]
+            # Upsert teams
+            home = game["homeTeam"]
+            away = game["awayTeam"]
 
-            for team in [home, away]:
-                abbrev = team["team"]["abbreviation"]
+            for t in [home, away]:
+                abbrev = t["abbrev"]
                 if abbrev not in team_cache:
-                    team_cache[abbrev] = upsert_team(cur, team["team"]["name"], abbrev)
+                    team_cache[abbrev] = upsert_team(cur, t["name"], abbrev)
 
-            home_team_id = team_cache[home["team"]["abbreviation"]]
-            away_team_id = team_cache[away["team"]["abbreviation"]]
+            home_team_id = team_cache[home["abbrev"]]
+            away_team_id = team_cache[away["abbrev"]]
 
             # Insert game
             cur.execute("""
@@ -65,12 +62,12 @@ def ingest_season(start_date=SEASON_START, end_date=SEASON_END):
                 ON CONFLICT (nhl_game_id) DO NOTHING
             """, (
                 nhl_game_id,
-                datetime.strptime(game["gameDate"], "%Y-%m-%dT%H:%M:%SZ"),
+                datetime.strptime(game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"),
                 home_team_id,
                 away_team_id,
                 home["score"],
                 away["score"],
-                game["status"]["detailedState"].lower(),
+                game["gameState"].lower(),
                 game["season"]
             ))
 
@@ -79,8 +76,8 @@ def ingest_season(start_date=SEASON_START, end_date=SEASON_END):
     conn.commit()
     cur.close()
     conn.close()
-
     print(f"Inserted {inserted_games} new games from {start_date} to {end_date}")
+
 
 if __name__ == "__main__":
     ingest_season()
