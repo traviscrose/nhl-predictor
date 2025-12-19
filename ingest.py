@@ -18,6 +18,14 @@ def upsert_team(cur, name, abbreviation):
     """, (name, abbreviation))
     return cur.fetchone()['id']
 
+def map_game_state(game_state):
+    mapping = {
+        "OFF": "scheduled",
+        "LIVE": "live",
+        "Final": "final"
+    }
+    return mapping.get(game_state, "scheduled")
+
 def ingest_schedule(start_date, end_date):
     """
     Ingests games from the NHL schedule API that returns `gameWeek`.
@@ -44,7 +52,8 @@ def ingest_schedule(start_date, end_date):
         for day in game_weeks:
             for game in day.get("games", []):
                 nhl_game_id = game["id"]
-                game_state = game.get("gameState", "OFF")  # OFF, LIVE, Final
+                raw_state = game.get("gameState", "OFF")
+                status = map_game_state(raw_state)
 
                 # Determine scores: only if Final
                 home_score = game["homeTeam"].get("score") if game_state == "Final" else None
@@ -80,7 +89,7 @@ def ingest_schedule(start_date, end_date):
                     away_team_id,
                     home_score,
                     away_score,
-                    game_state.lower(),
+                    status,
                     game["season"]
                 ))
 
