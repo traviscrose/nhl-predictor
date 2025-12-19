@@ -30,7 +30,7 @@ def ingest_schedule(start_date, end_date):
     current_date = start_date
 
     while current_date <= end_date:
-        url = f"{SCHEDULE_URL}?startDate={current_date}"
+        url = f"{SCHEDULE_URL}/{current_date}"
         resp = requests.get(url)
         if resp.status_code == 404:
             print(f"No data for {current_date}")
