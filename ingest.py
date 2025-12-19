@@ -2,7 +2,8 @@ from db import get_conn
 import requests
 from datetime import datetime
 
-BASE_URL = "https://api-web.nhle.com/v1/schedule"
+# Replace with your actual working endpoint
+SCHEDULE_URL = "https://api-web.nhle.com/v1/schedule"  
 
 def upsert_team(cur, name, abbreviation):
     """
@@ -18,6 +19,10 @@ def upsert_team(cur, name, abbreviation):
     return cur.fetchone()['id']
 
 def ingest_schedule(start_date, end_date):
+    """
+    Ingests games from the NHL schedule API that returns `gameWeek`.
+    Inserts teams and games into Postgres, including scheduled games.
+    """
     conn = get_conn()
     cur = conn.cursor()
     team_cache = {}
@@ -25,7 +30,7 @@ def ingest_schedule(start_date, end_date):
     current_date = start_date
 
     while current_date <= end_date:
-        url = f"{BASE_URL}?startDate={current_date}"
+        url = f"{SCHEDULE_URL}?startDate={current_date}"
         resp = requests.get(url)
         if resp.status_code == 404:
             print(f"No data for {current_date}")
@@ -33,14 +38,17 @@ def ingest_schedule(start_date, end_date):
         resp.raise_for_status()
         schedule = resp.json()
 
-        for day in schedule.get("gameWeek", []):
+        game_weeks = schedule.get("gameWeek", [])
+        if not game_weeks:
+            print(f"No games in gameWeek for {current_date}")
+        for day in game_weeks:
             for game in day.get("games", []):
                 nhl_game_id = game["id"]
-                game_state = game["gameState"]  # OFF, LIVE, Final
+                game_state = game.get("gameState", "OFF")  # OFF, LIVE, Final
 
-                # Determine scores: only if Final, otherwise NULL
-                home_score = game["homeTeam"]["score"] if game_state == "Final" else None
-                away_score = game["awayTeam"]["score"] if game_state == "Final" else None
+                # Determine scores: only if Final
+                home_score = game["homeTeam"].get("score") if game_state == "Final" else None
+                away_score = game["awayTeam"].get("score") if game_state == "Final" else None
 
                 # Upsert teams
                 for t in [game["homeTeam"], game["awayTeam"]]:
@@ -79,7 +87,7 @@ def ingest_schedule(start_date, end_date):
                 print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({game_state})")
                 total_inserted += 1
 
-        # Advance to nextStartDate if provided
+        # Move to nextStartDate for next iteration
         next_date = schedule.get("nextStartDate")
         if not next_date or next_date > end_date:
             break
@@ -91,5 +99,5 @@ def ingest_schedule(start_date, end_date):
     print(f"Finished ingestion: inserted {total_inserted} new games.")
 
 if __name__ == "__main__":
-    # Example: ingest upcoming and past games for the season
+    # Example: ingest from Oct 7, 2025 to Dec 19, 2025
     ingest_schedule("2025-10-07", "2025-12-19")
