@@ -5,7 +5,4 @@ from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
-    """
-    Returns a new Postgres connection using DATABASE_URL from env.
-    """
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
