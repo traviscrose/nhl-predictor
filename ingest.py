@@ -56,8 +56,8 @@ def ingest_schedule(start_date, end_date):
                 status = map_game_state(raw_state)
 
                 # Determine scores: only if Final
-                home_score = game["homeTeam"].get("score") if game_state == "Final" else None
-                away_score = game["awayTeam"].get("score") if game_state == "Final" else None
+                home_score = game["homeTeam"].get("score") if raw_state == "Final" else None
+                away_score = game["awayTeam"].get("score") if raw_state == "Final" else None
 
                 # Upsert teams
                 for t in [game["homeTeam"], game["awayTeam"]]:
