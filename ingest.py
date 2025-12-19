@@ -2,7 +2,7 @@ from db import get_conn
 from nhl_api import get_schedule_for_date
 from datetime import date, datetime, timedelta
 
-SEASON_START = date(2025, 10, 07)
+SEASON_START = date(2025, 10, 7)
 SEASON_END = date.today()  # Or the fixed final date for the season
 
 def daterange(start: date, end: date):
