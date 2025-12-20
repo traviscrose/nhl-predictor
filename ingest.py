@@ -18,13 +18,20 @@ def upsert_team(cur, name, abbreviation):
     """, (name, abbreviation))
     return cur.fetchone()['id']
 
+#def map_game_state(game_state):
+    #mapping = {
+        #"OFF": "scheduled",
+        #"LIVE": "live",
+        #"Final": "final"
+    #}
+    #return mapping.get(game_state, "scheduled")
+
 def map_game_state(game_state):
-    mapping = {
+    return {
         "OFF": "scheduled",
         "LIVE": "live",
         "Final": "final"
-    }
-    return mapping.get(game_state, "scheduled")
+    }.get(game_state, "scheduled")
 
 def ingest_schedule(start_date, end_date):
     """
@@ -56,8 +63,8 @@ def ingest_schedule(start_date, end_date):
                 status = map_game_state(raw_state)
 
                 # Determine scores: only if Final
-                home_score = game["homeTeam"].get("score") if raw_state == "Final" else None
-                away_score = game["awayTeam"].get("score") if raw_state == "Final" else None
+                home_score = game["homeTeam"].get("score") if status == "Final" else None
+                away_score = game["awayTeam"].get("score") if status == "Final" else None
 
                 # Upsert teams
                 for t in [game["homeTeam"], game["awayTeam"]]:
@@ -75,23 +82,52 @@ def ingest_schedule(start_date, end_date):
                     continue
 
                 # Insert game
+                #cur.execute("""
+                    #INSERT INTO games (
+                        #nhl_game_id, date, home_team_id, away_team_id,
+                        #home_score, away_score, status, season
+                    #)
+                    #VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    #ON CONFLICT (nhl_game_id) DO NOTHING
+                #""", (
+                    #nhl_game_id,
+                    #datetime.strptime(game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"),
+                    #home_team_id,
+                    #away_team_id,
+                    #home_score,
+                    #away_score,
+                    #status,
+                    #game["season"]
+                #))
+
+                # Insert game
                 cur.execute("""
                     INSERT INTO games (
                         nhl_game_id, date, home_team_id, away_team_id,
-                        home_score, away_score, status, season
+                        home_score, away_score, status
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (nhl_game_id) DO NOTHING
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (nhl_game_id) DO UPDATE
+                    SET
+                    status = EXCLUDED.status,
+                    home_score = CASE
+                        WHEN EXCLUDED.status = 'final' THEN EXCLUDED.home_score
+                        ELSE games.home_score
+                    END,
+                    away_score = CASE
+                        WHEN EXCLUDED.status = 'final' THEN EXCLUDED.away_score
+                        ELSE games.away_score
+                    END
                 """, (
                     nhl_game_id,
-                    datetime.strptime(game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"),
+                    game_date,
                     home_team_id,
                     away_team_id,
                     home_score,
                     away_score,
-                    status,
-                    game["season"]
-                ))
+                    status
+            ))
+
 
                 print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({status})")
                 total_inserted += 1
