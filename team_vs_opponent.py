@@ -18,24 +18,24 @@ player_stats = pd.read_sql("""
         ps.shots,
         ps.hits,
         ps.time_on_ice
-    FROM public.player_stats ps
-    JOIN public.players p ON ps.player_id = p.id
-    JOIN public.teams t ON ps.team_id = t.id
+    FROM player_stats ps
+    JOIN players p ON ps.player_id = p.id
+    JOIN teams t ON ps.team_id = t.id
 """, engine)
 
 games = pd.read_sql("""
     SELECT
-        g.id AS game_id,
-        g.date,
-        g.home_team_id,
-        g.away_team_id,
-        ht.abbreviation AS home_abbrev,
-        at.abbreviation AS away_abbrev
-    FROM public.games g
-    JOIN public.teams ht ON g.home_team_id = ht.id
-    JOIN public.teams at ON g.away_team_id = at.id
-    WHERE g.status = 'final'
+        id AS game_id,
+        date,
+        home_team_id,
+        away_team_id
+    FROM public.games
+    WHERE status = 'final'
 """, engine)
+
+required = {"game_id", "home_team_id", "away_team_id"}
+missing = required - set(games.columns)
+assert not missing, f"Missing columns in games DF: {missing}"
 
 # ---------------------------
 # 2. Split skaters & goalies
@@ -48,7 +48,7 @@ def toi_to_minutes(toi):
     if pd.isna(toi):
         return 0.0
     m, s = toi.split(":")
-    return int(m) + int(s) / 60
+    return int(m) + int(s)/60
 
 skaters["toi_minutes"] = skaters["time_on_ice"].apply(toi_to_minutes)
 goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
@@ -59,7 +59,7 @@ goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 
 team_game_stats = (
     skaters
-    .groupby(["game_id", "team_id", "team_abbrev"], as_index=False)
+    .groupby(["game_id", "team_id"], as_index=False)
     .agg(
         goals=("goals", "sum"),
         assists=("assists", "sum"),
@@ -93,25 +93,19 @@ team_game_stats = team_game_stats.merge(
 games_long = pd.concat([
     games.assign(
         team_id=games.home_team_id,
-        team_abbrev=games.home_abbrev,
         home_away="home",
-        opp_team_id=games.away_team_id,
-        opp_abbrev=games.away_abbrev
+        opp_team_id=games.away_team_id
     ),
     games.assign(
         team_id=games.away_team_id,
-        team_abbrev=games.away_abbrev,
         home_away="away",
-        opp_team_id=games.home_team_id,
-        opp_abbrev=games.home_abbrev
+        opp_team_id=games.home_team_id
     )
 ], ignore_index=True)
 
 df = team_game_stats.merge(
-    games_long[[
-        "game_id", "team_id", "team_abbrev", "home_away", "opp_team_id", "opp_abbrev", "date"
-    ]],
-    on=["game_id", "team_id", "team_abbrev"],
+    games_long,
+    on=["game_id", "team_id"],
     how="inner"
 )
 
@@ -121,16 +115,18 @@ df = team_game_stats.merge(
 
 opp_stats = team_game_stats.rename(columns={
     "team_id": "opp_team_id",
-    "team_abbrev": "opp_abbrev",
     "goals": "opp_goals",
     "shots": "opp_shots",
     "hits": "opp_hits",
     "points": "opp_points",
-})[["game_id", "opp_team_id", "opp_abbrev", "opp_goals", "opp_shots", "opp_hits", "opp_points"]]
+})
 
 df = df.merge(
-    opp_stats,
-    on=["game_id", "opp_team_id", "opp_abbrev"],
+    opp_stats[[
+        "game_id", "opp_team_id",
+        "opp_goals", "opp_shots", "opp_hits", "opp_points"
+    ]],
+    on=["game_id", "opp_team_id"],
     how="left"
 )
 
@@ -142,10 +138,11 @@ df = df.sort_values(["team_id", "date"])
 
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
-        df.groupby("team_id")[col]
-          .rolling(5, min_periods=1)
-          .mean()
-          .reset_index(level=0, drop=True)
+        df
+        .groupby("team_id")[col]
+        .rolling(5, min_periods=1)
+        .mean()
+        .reset_index(level=0, drop=True)
     )
 
 # ---------------------------
@@ -157,7 +154,7 @@ final_cols = [
     "team_id",
     "team_abbrev",
     "home_away",
-    "opp_abbrev",
+    "opp_team_id",
     "goals",
     "goals_against",
     "shots",
@@ -180,7 +177,7 @@ print(final_df.head())
 print(f"Final rows: {len(final_df)}")
 
 # ---------------------------
-# 8. Persist to DB
+# 8. Persist to database
 # ---------------------------
 
 persist_team_game_features(final_df)
