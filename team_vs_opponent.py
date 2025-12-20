@@ -5,7 +5,6 @@ from persist_team_game_features import persist_team_game_features
 # ---------------------------
 # 1. Load base tables
 # ---------------------------
-
 player_stats = pd.read_sql("""
     SELECT
         ps.game_id,
@@ -18,9 +17,9 @@ player_stats = pd.read_sql("""
         ps.shots,
         ps.hits,
         ps.time_on_ice
-    FROM player_stats ps
-    JOIN players p ON ps.player_id = p.id
-    JOIN teams t ON ps.team_id = t.id
+    FROM public.player_stats ps
+    JOIN public.players p ON ps.player_id = p.id
+    JOIN public.teams t ON ps.team_id = t.id
 """, engine)
 
 games = pd.read_sql("""
@@ -33,14 +32,9 @@ games = pd.read_sql("""
     WHERE status = 'final'
 """, engine)
 
-required = {"game_id", "home_team_id", "away_team_id"}
-missing = required - set(games.columns)
-assert not missing, f"Missing columns in games DF: {missing}"
-
 # ---------------------------
 # 2. Split skaters & goalies
 # ---------------------------
-
 skaters = player_stats[player_stats["position"] != "G"].copy()
 goalies = player_stats[player_stats["position"] == "G"].copy()
 
@@ -56,28 +50,24 @@ goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 # ---------------------------
 # 3. Aggregate TEAM GAME stats
 # ---------------------------
-
 team_game_stats = (
-    skaters
-    .groupby(["game_id", "team_id"], as_index=False)
+    skaters.groupby(["game_id", "team_id"], as_index=False)
     .agg(
-        team_abbrev=("team_abbrev", "first"),  # keep abbreviation
         goals=("goals", "sum"),
         assists=("assists", "sum"),
         points=("points", "sum"),
         shots=("shots", "sum"),
         hits=("hits", "sum"),
-        toi_minutes=("toi_minutes", "sum"),
+        toi_minutes=("toi_minutes", "sum")
     )
 )
 
 goalie_game_stats = (
-    goalies
-    .groupby(["game_id", "team_id"], as_index=False)
+    goalies.groupby(["game_id", "team_id"], as_index=False)
     .agg(
         goals_against=("goals", "sum"),
         shots_against=("shots", "sum"),
-        goalie_toi=("toi_minutes", "sum"),
+        goalie_toi=("toi_minutes", "sum")
     )
 )
 
@@ -90,95 +80,47 @@ team_game_stats = team_game_stats.merge(
 # ---------------------------
 # 4. Attach opponent info
 # ---------------------------
-
 games_long = pd.concat([
-    games.assign(
-        team_id=games.home_team_id,
-        home_away="home",
-        opp_team_id=games.away_team_id
-    ),
-    games.assign(
-        team_id=games.away_team_id,
-        home_away="away",
-        opp_team_id=games.home_team_id
-    )
+    games.assign(team_id=games.home_team_id, home_away="home", opp_team_id=games.away_team_id),
+    games.assign(team_id=games.away_team_id, home_away="away", opp_team_id=games.home_team_id)
 ], ignore_index=True)
 
-df = team_game_stats.merge(
-    games_long,
-    on=["game_id", "team_id"],
-    how="inner"
-)
+df = team_game_stats.merge(games_long, on=["game_id", "team_id"], how="inner")
 
 # ---------------------------
 # 5. Add opponent stats
 # ---------------------------
-
 opp_stats = team_game_stats.rename(columns={
     "team_id": "opp_team_id",
     "goals": "opp_goals",
     "shots": "opp_shots",
     "hits": "opp_hits",
-    "points": "opp_points",
-})
+    "points": "opp_points"
+})[["game_id", "opp_team_id", "opp_goals", "opp_shots", "opp_hits", "opp_points"]]
 
-df = df.merge(
-    opp_stats[[
-        "game_id", "opp_team_id",
-        "opp_goals", "opp_shots", "opp_hits", "opp_points"
-    ]],
-    on=["game_id", "opp_team_id"],
-    how="left"
-)
+df = df.merge(opp_stats, on=["game_id", "opp_team_id"], how="left")
 
 # ---------------------------
 # 6. Rolling last-5 averages
 # ---------------------------
-
 df = df.sort_values(["team_id", "date"])
-
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
-        df
-        .groupby("team_id")[col]
-        .rolling(5, min_periods=1)
-        .mean()
-        .reset_index(level=0, drop=True)
+        df.groupby("team_id")[col]
+          .rolling(5, min_periods=1)
+          .mean()
+          .reset_index(level=0, drop=True)
     )
 
 # ---------------------------
-# 7. Final dataset
+# 7. Persist final dataset
 # ---------------------------
-
 final_cols = [
-    "game_id",
-    "team_id",
-    "team_abbrev",
-    "home_away",
-    "opp_team_id",
-    "goals",
-    "goals_against",
-    "shots",
-    "hits",
-    "points",
-    "opp_goals",
-    "opp_shots",
-    "opp_hits",
-    "opp_points",
-    "goals_last5",
-    "goals_against_last5",
-    "shots_last5",
-    "hits_last5",
-    "points_last5",
+    "game_id","team_id","team_abbrev","home_away","opp_team_id",
+    "goals","goals_against","shots","hits","points",
+    "opp_goals","opp_shots","opp_hits","opp_points",
+    "goals_last5","goals_against_last5","shots_last5","hits_last5","points_last5"
 ]
 
 final_df = df[final_cols]
-
-print(final_df.head())
-print(f"Final rows: {len(final_df)}")
-
-# ---------------------------
-# 8. Persist to database
-# ---------------------------
-
 persist_team_game_features(final_df)
