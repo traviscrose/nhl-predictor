@@ -11,13 +11,13 @@ def persist_team_game_features(df):
         game_id, team_id, team_abbrev, home_away, opp_abbrev,
         goals, goals_against, shots, hits, points,
         opp_goals, opp_shots, opp_hits, opp_points,
-        goals_last5, goals_against_last5, shots_last5, hits_last5, points_last5
+        goals_last5, goals_against_last5, shots_last5, hits_last5, points_last5, opp_team_id
     )
     VALUES (
         :game_id, :team_id, :team_abbrev, :home_away, :opp_abbrev,
         :goals, :goals_against, :shots, :hits, :points,
         :opp_goals, :opp_shots, :opp_hits, :opp_points,
-        :goals_last5, :goals_against_last5, :shots_last5, :hits_last5, :points_last5
+        :goals_last5, :goals_against_last5, :shots_last5, :hits_last5, :points_last5, :opp_team_id
     )
     ON CONFLICT (game_id, team_id) DO UPDATE SET
         goals = EXCLUDED.goals,
@@ -33,7 +33,8 @@ def persist_team_game_features(df):
         goals_against_last5 = EXCLUDED.goals_against_last5,
         shots_last5 = EXCLUDED.shots_last5,
         hits_last5 = EXCLUDED.hits_last5,
-        points_last5 = EXCLUDED.points_last5
+        points_last5 = EXCLUDED.points_last5,
+        opp_team_id = EXCLUDED.opp_team_id
     """
 
     with engine.begin() as conn:
