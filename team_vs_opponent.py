@@ -90,6 +90,7 @@ team_game_stats = team_game_stats.merge(
 # 4. Attach opponent info
 # ---------------------------
 
+# Create long format games table for home and away
 games_long = pd.concat([
     games.assign(
         team_id=games.home_team_id,
@@ -107,11 +108,12 @@ games_long = pd.concat([
     )
 ], ignore_index=True)
 
+# Merge team stats with game info, use only game_id and team_id as keys
 df = team_game_stats.merge(
     games_long[[
         "game_id", "team_id", "team_abbrev", "home_away", "opp_team_id", "opp_abbrev", "date"
     ]],
-    on=["game_id", "team_id", "team_abbrev"],
+    on=["game_id", "team_id"],
     how="inner"
 )
 
@@ -119,6 +121,7 @@ df = team_game_stats.merge(
 # 5. Add opponent stats
 # ---------------------------
 
+# Prepare opponent stats
 opp_stats = team_game_stats.rename(columns={
     "team_id": "opp_team_id",
     "team_abbrev": "opp_abbrev",
@@ -152,6 +155,7 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
 # 7. Final dataset
 # ---------------------------
 
+# Ensure all final columns exist in df
 final_cols = [
     "game_id",
     "team_id",
@@ -173,6 +177,11 @@ final_cols = [
     "hits_last5",
     "points_last5",
 ]
+
+# Fill missing columns with NaN if they somehow don't exist
+for col in final_cols:
+    if col not in df.columns:
+        df[col] = float("nan")
 
 final_df = df[final_cols]
 
