@@ -140,7 +140,7 @@ df = df.merge(
 # 6. Rolling last-5 averages
 # ---------------------------
 
-df = df.sort_values(["team_abbrev", "date"])
+df = df.sort_values(["team_id", "date"])
 
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
