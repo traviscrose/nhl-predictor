@@ -61,6 +61,7 @@ team_game_stats = (
     skaters
     .groupby(["game_id", "team_id"], as_index=False)
     .agg(
+        team_abbrev=("team_abbrev", "first"),  # keep abbreviation
         goals=("goals", "sum"),
         assists=("assists", "sum"),
         points=("points", "sum"),
