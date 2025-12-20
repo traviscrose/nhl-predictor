@@ -154,6 +154,7 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
 
 final_cols = [
     "game_id",
+    "team_id",
     "team_abbrev",
     "home_away",
     "opp_abbrev",
