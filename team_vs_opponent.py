@@ -19,9 +19,12 @@ player_stats = pd.read_sql("""
         ps.hits,
         ps.time_on_ice
     FROM public.player_stats ps
+    JOIN public.games g ON ps.game_id = g.id
     JOIN public.players p ON ps.player_id = p.id
     JOIN public.teams t ON ps.team_id = t.id
+    WHERE g.status = 'final'
 """, engine)
+
 
 games = pd.read_sql("""
     SELECT
@@ -59,7 +62,7 @@ goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 
 team_game_stats = (
     skaters
-    .groupby(["game_id", "team_id", "team_abbrev"], as_index=False)
+    .groupby(["game_id", "team_id"], as_index=False)
     .agg(
         goals=("goals", "sum"),
         assists=("assists", "sum"),
@@ -130,8 +133,8 @@ df = team_game_stats.merge(
         ]
     ],
     on=["game_id", "team_id"],
-    how="left",
-    validate="one_to_one",  # catches silent data corruption
+    how="inner",  # safe now
+    validate="one_to_one",
 )
 
 # 🚨 Hard fail if opponent missing
