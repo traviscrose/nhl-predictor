@@ -19,7 +19,6 @@ def ingest_player_stats():
     conn = get_conn()
     cur = conn.cursor()
 
-    # Pull FINAL games only
     cur.execute("""
         SELECT id, nhl_game_id
         FROM games
@@ -33,41 +32,35 @@ def ingest_player_stats():
         game_db_id = g["id"]
         nhl_game_id = g["nhl_game_id"]
 
-        url = BOXSCORE_URL.format(game_id=nhl_game_id)
+        url = f"https://api-web.nhle.com/v1/gamecenter/{nhl_game_id}/boxscore"
         resp = requests.get(url)
         resp.raise_for_status()
         data = resp.json()
 
+        pbg = data.get("playerByGameStats", {})
+
         for side in ("homeTeam", "awayTeam"):
-            team = data.get(side)
-            if not team:
+            team_stats = pbg.get(side)
+            if not team_stats:
                 continue
 
-            team_abbrev = team["abbrev"]
+            team_abbrev = data[side]["abbrev"]
 
             # Lookup team_id
             cur.execute(
                 "SELECT id FROM teams WHERE abbreviation=%s",
                 (team_abbrev,)
             )
-            team_row = cur.fetchone()
-            if not team_row:
-                continue
-            team_id = team_row["id"]
+            team_id = cur.fetchone()["id"]
 
-            players = team.get("players", {})
+            # Skaters = forwards + defense
+            skaters = (
+                team_stats.get("forwards", [])
+                + team_stats.get("defense", [])
+            )
 
-            for p in players.values():
-                if p.get("position") == "G":
-                    continue  # skip goalies for now
-
-                first = p.get("firstName", {}).get("default", "")
-                last = p.get("lastName", {}).get("default", "")
-                name = f"{first} {last}".strip()
-
-                stats = p.get("stats")
-                if not stats:
-                    continue
+            for p in skaters:
+                name = p["name"]["default"]
 
                 player_id = upsert_player(cur, name, team_id)
 
@@ -90,12 +83,12 @@ def ingest_player_stats():
                     player_id,
                     game_db_id,
                     team_id,
-                    stats.get("goals"),
-                    stats.get("assists"),
-                    stats.get("points"),
-                    stats.get("shots"),
-                    stats.get("hits"),
-                    stats.get("toi"),
+                    p.get("goals"),
+                    p.get("assists"),
+                    p.get("points"),
+                    p.get("sog"),
+                    p.get("hits"),
+                    p.get("toi"),
                 ))
 
                 total_rows += 1
@@ -107,6 +100,7 @@ def ingest_player_stats():
     conn.close()
 
     print(f"Finished player stats ingestion: {total_rows} rows")
+
 
 
 if __name__ == "__main__":
