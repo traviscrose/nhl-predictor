@@ -24,14 +24,12 @@ player_stats = pd.read_sql("""
 
 games = pd.read_sql("""
     SELECT
-        g.id AS game_id,
-        g.date,
-        ht.abbreviation AS home_abbrev,
-        at.abbreviation AS away_abbrev
-    FROM games g
-    JOIN teams ht ON g.home_team_id = ht.id
-    JOIN teams at ON g.away_team_id = at.id
-    WHERE g.status = 'final'
+        id AS game_id,
+        date,
+        home_team_id,
+        away_team_id
+    FROM public.games
+    WHERE status = 'final'
 """, engine)
 
 required = {"game_id", "home_team_id", "away_team_id"}
@@ -96,23 +94,21 @@ team_game_stats = team_game_stats.merge(
 
 games_long = pd.concat([
     games.assign(
-        team_id=games["home_team_id"],
+        team_id=games.home_team_id,
         home_away="home",
-        opp_team_id=games["away_team_id"]
+        opp_team_id=games.away_team_id
     ),
     games.assign(
-        team_id=games["away_team_id"],
+        team_id=games.away_team_id,
         home_away="away",
-        opp_team_id=games["home_team_id"]
+        opp_team_id=games.home_team_id
     )
-])[["game_id", "date", "team_id", "home_away", "opp_team_id"]]
-
+], ignore_index=True)
 
 df = team_game_stats.merge(
     games_long,
     on=["game_id", "team_id"],
-    how="inner",
-    validate="one_to_one"
+    how="inner"
 )
 
 # ---------------------------
