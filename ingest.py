@@ -61,14 +61,20 @@ def ingest_schedule(start_date, end_date):
                 nhl_game_id = game["id"]
 
                 raw_state = game.get("gameState", "OFF")
-                status = map_game_state(raw_state)
+
+                home_score = game["homeTeam"].get("score")
+                away_score = game["awayTeam"].get("score")
+
+                if home_score is not None and away_score is not None:
+                    status = "final"
+                elif raw_state == "LIVE":
+                    status = "live"
+                else:
+                    status = "scheduled"
 
                 game_date = datetime.strptime(
                     game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"
                 )
-
-                home_score = game["homeTeam"].get("score") if status == "final" else None
-                away_score = game["awayTeam"].get("score") if status == "final" else None
 
                 # Upsert teams
                 for t in (game["homeTeam"], game["awayTeam"]):
@@ -107,9 +113,6 @@ def ingest_schedule(start_date, end_date):
                     away_score,
                     status
                 ))
-
-                total_inserted += 1
-
 
                 print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({status})")
                 total_inserted += 1
