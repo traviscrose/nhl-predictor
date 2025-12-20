@@ -3,17 +3,15 @@ import requests
 
 BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
 
-
-def upsert_player(cur, name, team_id):
+def upsert_player(cur, name, team_id, position):
     cur.execute("""
-        INSERT INTO players (name, team_id)
-        VALUES (%s, %s)
-        ON CONFLICT (name, team_id) DO UPDATE
+        INSERT INTO players (name, team_id, position)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (name, team_id, position) DO UPDATE
         SET team_id = EXCLUDED.team_id
         RETURNING id
-    """, (name, team_id))
+    """, (name, team_id, position))
     return cur.fetchone()["id"]
-
 
 def ingest_player_stats():
     conn = get_conn()
@@ -61,8 +59,8 @@ def ingest_player_stats():
 
         for p in skaters:
             name = p["name"]["default"]
-
-            player_id = upsert_player(cur, name, team_id)
+            position = p.get("position")  # C, L, R, D
+            player_id = upsert_player(cur, name, team_id, position)
 
             cur.execute("""
                 INSERT INTO player_stats (
@@ -99,8 +97,9 @@ def ingest_player_stats():
 
         for g in goalies:
             name = g["name"]["default"]
+            position = "G"
 
-            player_id = upsert_player(cur, name, team_id)
+            player_id = upsert_player(cur, name, team_id, position)
 
             cur.execute("""
                 INSERT INTO player_stats (
