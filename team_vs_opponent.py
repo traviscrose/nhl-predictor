@@ -33,6 +33,10 @@ games = pd.read_sql("""
     WHERE status = 'final'
 """, engine)
 
+required = {"game_id", "home_team_id", "away_team_id"}
+missing = required - set(games.columns)
+assert not missing, f"Missing columns in games DF: {missing}"
+
 # ---------------------------
 # 2. Split skaters & goalies
 # ---------------------------
@@ -76,16 +80,8 @@ goalie_game_stats = (
     )
 )
 
-# Merge skaters + goalies
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
-    on=["game_id", "team_id"],
-    how="left"
-)
-
-# Re-attach team_abbrev
-team_game_stats = team_game_stats.merge(
-    player_stats[["game_id", "team_id", "team_abbrev"]].drop_duplicates(),
     on=["game_id", "team_id"],
     how="left"
 )
@@ -100,17 +96,9 @@ games_long = pd.concat([
 ], ignore_index=True)
 
 df = team_game_stats.merge(
-    games_long[["game_id", "team_id", "home_away", "opp_team_id"]],
+    games_long[["game_id", "team_id", "home_away", "opp_team_id", "date"]],
     on=["game_id", "team_id"],
     how="inner"
-)
-
-# Attach opponent abbreviation
-df = df.merge(
-    player_stats[["game_id", "team_id", "team_abbrev"]]
-    .rename(columns={"team_id": "opp_team_id", "team_abbrev": "opp_abbrev"}),
-    on=["game_id", "opp_team_id"],
-    how="left"
 )
 
 # ---------------------------
@@ -123,12 +111,10 @@ opp_stats = team_game_stats.rename(columns={
     "shots": "opp_shots",
     "hits": "opp_hits",
     "points": "opp_points",
-})[
-    ["game_id", "opp_team_id", "opp_goals", "opp_shots", "opp_hits", "opp_points"]
-]
+})
 
 df = df.merge(
-    opp_stats,
+    opp_stats[["game_id", "opp_team_id", "opp_goals", "opp_shots", "opp_hits", "opp_points"]],
     on=["game_id", "opp_team_id"],
     how="left"
 )
@@ -148,15 +134,6 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
         .reset_index(level=0, drop=True)
     )
 
-# Fill NaNs in numeric columns before persistence
-numeric_cols = [
-    "goals", "goals_against", "shots", "hits", "points",
-    "opp_goals", "opp_shots", "opp_hits", "opp_points",
-    "goals_last5", "goals_against_last5", "shots_last5",
-    "hits_last5", "points_last5"
-]
-df[numeric_cols] = df[numeric_cols].fillna(0)
-
 # ---------------------------
 # 7. Final dataset
 # ---------------------------
@@ -167,7 +144,6 @@ final_cols = [
     "team_abbrev",
     "home_away",
     "opp_team_id",
-    "opp_abbrev",
     "goals",
     "goals_against",
     "shots",
@@ -186,11 +162,20 @@ final_cols = [
 
 final_df = df[final_cols]
 
+# Fill NaN with 0 before persisting
+numeric_cols = [
+    "goals", "goals_against", "shots", "hits", "points",
+    "opp_goals", "opp_shots", "opp_hits", "opp_points",
+    "goals_last5", "goals_against_last5", "shots_last5",
+    "hits_last5", "points_last5"
+]
+final_df[numeric_cols] = final_df[numeric_cols].fillna(0)
+
 print(final_df.head())
 print(f"Final rows: {len(final_df)}")
 
 # ---------------------------
-# 8. Persist final table
+# 8. Persist to database
 # ---------------------------
 
 persist_team_game_features(final_df)
