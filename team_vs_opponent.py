@@ -87,54 +87,84 @@ team_game_stats = team_game_stats.merge(
 )
 
 # ---------------------------
-# 4. Attach opponent info
+# 4. Attach opponent info (ID-SAFE)
 # ---------------------------
 
-# Create long format games table for home and away
-games_long = pd.concat([
-    games.assign(
-        team_id=games.home_team_id,
-        team_abbrev=games.home_abbrev,
-        home_away="home",
-        opp_team_id=games.away_team_id,
-        opp_abbrev=games.away_abbrev
-    ),
-    games.assign(
-        team_id=games.away_team_id,
-        team_abbrev=games.away_abbrev,
-        home_away="away",
-        opp_team_id=games.home_team_id,
-        opp_abbrev=games.home_abbrev
-    )
-], ignore_index=True)
-
-# Merge team stats with game info, use only game_id and team_id as keys
-df = team_game_stats.merge(
-    games_long[[
-        "game_id", "team_id", "team_abbrev", "home_away", "opp_team_id", "opp_abbrev", "date"
-    ]],
-    on=["game_id", "team_id"],
-    how="left"  # <-- left join preserves all team_game_stats rows
+games_long = pd.concat(
+    [
+        games.assign(
+            team_id=games.home_team_id,
+            opp_team_id=games.away_team_id,
+            team_abbrev=games.home_abbrev,
+            opp_abbrev=games.away_abbrev,
+            home_away="home",
+        ),
+        games.assign(
+            team_id=games.away_team_id,
+            opp_team_id=games.home_team_id,
+            team_abbrev=games.away_abbrev,
+            opp_abbrev=games.home_abbrev,
+            home_away="away",
+        ),
+    ],
+    ignore_index=True,
 )
+
+# 🔒 Enforce ID types (critical)
+team_game_stats["team_id"] = team_game_stats["team_id"].astype(int)
+team_game_stats["game_id"] = team_game_stats["game_id"].astype(int)
+games_long["team_id"] = games_long["team_id"].astype(int)
+games_long["game_id"] = games_long["game_id"].astype(int)
+
+# 🔑 Merge ONLY on IDs
+df = team_game_stats.merge(
+    games_long[
+        [
+            "game_id",
+            "team_id",
+            "team_abbrev",
+            "opp_team_id",
+            "opp_abbrev",
+            "home_away",
+            "date",
+        ]
+    ],
+    on=["game_id", "team_id"],
+    how="left",
+    validate="one_to_one",  # catches silent data corruption
+)
+
+# 🚨 Hard fail if opponent missing
+if df["opp_team_id"].isna().any():
+    raise ValueError("❌ opp_team_id missing — games_long merge failed")
 
 # ---------------------------
 # 5. Add opponent stats
 # ---------------------------
 
-# Prepare opponent stats
-opp_stats = team_game_stats.rename(columns={
-    "team_id": "opp_team_id",
-    "team_abbrev": "opp_abbrev",
-    "goals": "opp_goals",
-    "shots": "opp_shots",
-    "hits": "opp_hits",
-    "points": "opp_points",
-})[["game_id", "opp_team_id", "opp_abbrev", "opp_goals", "opp_shots", "opp_hits", "opp_points"]]
+opp_stats = team_game_stats.rename(
+    columns={
+        "team_id": "opp_team_id",
+        "goals": "opp_goals",
+        "shots": "opp_shots",
+        "hits": "opp_hits",
+        "points": "opp_points",
+    }
+)[
+    [
+        "game_id",
+        "opp_team_id",
+        "opp_goals",
+        "opp_shots",
+        "opp_hits",
+        "opp_points",
+    ]
+]
 
 df = df.merge(
     opp_stats,
-    on=["game_id", "opp_team_id", "opp_abbrev"],
-    how="left"
+    on=["game_id", "opp_team_id"],
+    how="left",
 )
 
 # ---------------------------
