@@ -53,45 +53,81 @@ def ingest_player_stats():
             )
             team_id = cur.fetchone()["id"]
 
-            # Skaters = forwards + defense
-            skaters = (
-                team_stats.get("forwards", [])
-                + team_stats.get("defense", [])
-            )
+        # ---------- SKATERS ----------
+        skaters = (
+            team_stats.get("forwards", [])
+            + team_stats.get("defense", [])
+        )
 
-            for p in skaters:
-                name = p["name"]["default"]
+        for p in skaters:
+            name = p["name"]["default"]
 
-                player_id = upsert_player(cur, name, team_id)
+            player_id = upsert_player(cur, name, team_id)
 
-                cur.execute("""
-                    INSERT INTO player_stats (
-                        player_id, game_id, team_id,
-                        goals, assists, points,
-                        shots, hits, time_on_ice
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (player_id, game_id) DO UPDATE
-                    SET
-                        goals = EXCLUDED.goals,
-                        assists = EXCLUDED.assists,
-                        points = EXCLUDED.points,
-                        shots = EXCLUDED.shots,
-                        hits = EXCLUDED.hits,
-                        time_on_ice = EXCLUDED.time_on_ice
-                """, (
-                    player_id,
-                    game_db_id,
-                    team_id,
-                    p.get("goals"),
-                    p.get("assists"),
-                    p.get("points"),
-                    p.get("sog"),
-                    p.get("hits"),
-                    p.get("toi"),
-                ))
+            cur.execute("""
+                INSERT INTO player_stats (
+                    player_id, game_id, team_id,
+                    goals, assists, points,
+                    shots, hits, time_on_ice
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (player_id, game_id) DO UPDATE
+                SET
+                    goals = EXCLUDED.goals,
+                    assists = EXCLUDED.assists,
+                    points = EXCLUDED.points,
+                    shots = EXCLUDED.shots,
+                    hits = EXCLUDED.hits,
+                    time_on_ice = EXCLUDED.time_on_ice
+            """, (
+                player_id,
+                game_db_id,
+                team_id,
+                p.get("goals"),
+                p.get("assists"),
+                p.get("points"),
+                p.get("sog"),
+                p.get("hits"),
+                p.get("toi"),
+            ))
 
-                total_rows += 1
+            total_rows += 1
+
+
+        # ---------- GOALIES ----------
+        goalies = team_stats.get("goalies", [])
+
+        for g in goalies:
+            name = g["name"]["default"]
+
+            player_id = upsert_player(cur, name, team_id)
+
+            cur.execute("""
+                INSERT INTO player_stats (
+                    player_id, game_id, team_id,
+                    goals, assists, points,
+                    shots, hits, time_on_ice
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (player_id, game_id) DO UPDATE
+                SET
+                    goals = EXCLUDED.goals,
+                    shots = EXCLUDED.shots,
+                    time_on_ice = EXCLUDED.time_on_ice
+            """, (
+                player_id,
+                game_db_id,
+                team_id,
+                g.get("goalsAgainst"),
+                0,          # assists
+                0,          # points
+                g.get("shotsAgainst"),
+                0,          # hits
+                g.get("toi"),
+            ))
+
+            total_rows += 1
+
 
         print(f"Ingested player stats for game {nhl_game_id}")
 
