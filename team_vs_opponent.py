@@ -145,7 +145,7 @@ df = df.sort_values(["team_id", "date"])
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
         df
-        .groupby("team_abbrev")[col]
+        .groupby("team_id")[col]
         .rolling(5, min_periods=1)
         .mean()
         .reset_index(level=0, drop=True)
