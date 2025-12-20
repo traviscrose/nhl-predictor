@@ -1,5 +1,7 @@
 import os
 from sqlalchemy import create_engine
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
