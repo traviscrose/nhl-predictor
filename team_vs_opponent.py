@@ -33,10 +33,6 @@ games = pd.read_sql("""
     WHERE status = 'final'
 """, engine)
 
-required = {"game_id", "home_team_id", "away_team_id"}
-missing = required - set(games.columns)
-assert not missing, f"Missing columns in games DF: {missing}"
-
 # ---------------------------
 # 2. Split skaters & goalies
 # ---------------------------
@@ -80,11 +76,21 @@ goalie_game_stats = (
     )
 )
 
+# Merge skaters + goalies stats
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
     on=["game_id", "team_id"],
     how="left"
 )
+
+# Add team abbreviation back in
+team_abbrev_df = player_stats[["team_id", "team_abbrev"]].drop_duplicates()
+team_game_stats = team_game_stats.merge(team_abbrev_df, on="team_id", how="left")
+
+# Fill NaNs in numeric columns (e.g., goals_against can be NaN if no goalie)
+numeric_cols = ["goals", "assists", "points", "shots", "hits",
+                "toi_minutes", "goals_against", "shots_against", "goalie_toi"]
+team_game_stats[numeric_cols] = team_game_stats[numeric_cols].fillna(0)
 
 # ---------------------------
 # 4. Attach opponent info
@@ -96,7 +102,7 @@ games_long = pd.concat([
 ], ignore_index=True)
 
 df = team_game_stats.merge(
-    games_long[["game_id", "team_id", "home_away", "opp_team_id", "date"]],
+    games_long,
     on=["game_id", "team_id"],
     how="inner"
 )
@@ -119,6 +125,10 @@ df = df.merge(
     how="left"
 )
 
+# Add opponent abbreviation
+team_abbrev_map = team_abbrev_df.set_index("team_id")["team_abbrev"].to_dict()
+df["opp_abbrev"] = df["opp_team_id"].map(team_abbrev_map)
+
 # ---------------------------
 # 6. Rolling last-5 averages
 # ---------------------------
@@ -127,11 +137,10 @@ df = df.sort_values(["team_id", "date"])
 
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
-        df
-        .groupby("team_id")[col]
-        .rolling(5, min_periods=1)
-        .mean()
-        .reset_index(level=0, drop=True)
+        df.groupby("team_id")[col]
+          .rolling(5, min_periods=1)
+          .mean()
+          .reset_index(level=0, drop=True)
     )
 
 # ---------------------------
@@ -143,7 +152,7 @@ final_cols = [
     "team_id",
     "team_abbrev",
     "home_away",
-    "opp_team_id",
+    "opp_abbrev",
     "goals",
     "goals_against",
     "shots",
@@ -161,15 +170,6 @@ final_cols = [
 ]
 
 final_df = df[final_cols]
-
-# Fill NaN with 0 before persisting
-numeric_cols = [
-    "goals", "goals_against", "shots", "hits", "points",
-    "opp_goals", "opp_shots", "opp_hits", "opp_points",
-    "goals_last5", "goals_against_last5", "shots_last5",
-    "hits_last5", "points_last5"
-]
-final_df[numeric_cols] = final_df[numeric_cols].fillna(0)
 
 print(final_df.head())
 print(f"Final rows: {len(final_df)}")
