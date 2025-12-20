@@ -119,6 +119,21 @@ team_game_stats["game_id"] = team_game_stats["game_id"].astype(int)
 games_long["team_id"] = games_long["team_id"].astype(int)
 games_long["game_id"] = games_long["game_id"].astype(int)
 
+print("team_game_stats team_id sample:")
+print(team_game_stats["team_id"].unique()[:10])
+
+print("\ngames_long team_id sample:")
+print(games_long["team_id"].unique()[:10])
+
+print("\nIntersection size:")
+print(
+    len(
+        set(team_game_stats["team_id"].unique())
+        & set(games_long["team_id"].unique())
+    )
+)
+
+
 # 🔑 Merge ONLY on IDs
 df = team_game_stats.merge(
     games_long[
