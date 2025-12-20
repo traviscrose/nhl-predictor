@@ -33,7 +33,7 @@ df['toi_minutes'] = df['time_on_ice'].apply(toi_to_minutes)
 # Fill missing numeric stats with 0
 numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits']
 for col in numeric_cols:
-    df[col] = df[col].fillna(0)
+    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
 # ------------------ AGGREGATE SKATERS ------------------
 skaters = df[df['position'] != 'G']
@@ -67,13 +67,12 @@ team_game_stats = pd.merge(
 
 # Fill missing goalie stats with 0 if no goalie played
 for col in ['goals_against', 'shots_against', 'goalie_toi']:
-    team_game_stats[col] = team_game_stats[col].fillna(0)
+    team_game_stats[col] = pd.to_numeric(team_game_stats[col], errors='coerce').fillna(0)
 
 # ------------------ HOME/AWAY AND OPPONENT ------------------
 with get_conn() as conn:
     games_df = pd.read_sql("SELECT id AS game_id, home_team_id, away_team_id FROM games", conn)
 
-# Add home/away indicator
 team_game_stats = team_game_stats.merge(games_df, on='game_id', how='left')
 team_game_stats['home_away'] = team_game_stats.apply(
     lambda row: 'home' if row['team_id'] == row['home_team_id'] else 'away', axis=1
@@ -102,6 +101,13 @@ team_vs_opponent = team_vs_opponent[
      'shots', 'hits', 'toi_minutes', 'goals_against', 'shots_against', 'goalie_toi',
      'opp_team_id', 'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
 ]
+
+# ------------------ ENSURE NUMERIC TYPES ------------------
+numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits', 
+                'toi_minutes', 'goals_against', 'shots_against', 'goalie_toi',
+                'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
+for col in numeric_cols:
+    team_vs_opponent[col] = pd.to_numeric(team_vs_opponent[col], errors='coerce').fillna(0)
 
 # ------------------ ROLLING FEATURES ------------------
 team_vs_opponent = team_vs_opponent.sort_values(['team_id', 'game_id'])
