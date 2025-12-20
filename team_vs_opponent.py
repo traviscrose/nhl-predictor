@@ -1,125 +1,168 @@
-import os
 import pandas as pd
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from db import engine
 
-# ------------------ DATABASE CONNECTION ------------------
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable not set")
+# ---------------------------
+# 1. Load base tables
+# ---------------------------
 
-def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-
-# ------------------ LOAD PLAYER STATS + GAME INFO ------------------
-with get_conn() as conn:
-    query = """
+player_stats = pd.read_sql("""
     SELECT
-        ps.player_id,
         ps.game_id,
         ps.team_id,
+        p.position,
         ps.goals,
         ps.assists,
         ps.points,
         ps.shots,
         ps.hits,
-        ps.time_on_ice,
-        p.position,
-        g.home_team_id,
-        g.away_team_id
+        ps.time_on_ice
     FROM player_stats ps
     JOIN players p ON ps.player_id = p.id
-    JOIN games g ON ps.game_id = g.id
-    """
-    df = pd.read_sql(query, conn)
+""", engine)
 
-# ------------------ ENSURE NUMERIC TYPES ------------------
-df['game_id'] = pd.to_numeric(df['game_id'], errors='coerce')
-df['team_id'] = pd.to_numeric(df['team_id'], errors='coerce')
+games = pd.read_sql("""
+    SELECT
+        id AS game_id,
+        date,
+        home_team_id,
+        away_team_id
+    FROM games
+    WHERE status = 'final'
+""", engine)
 
-numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits']
-for col in numeric_cols:
-    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+# ---------------------------
+# 2. Split skaters & goalies
+# ---------------------------
 
-# Convert time_on_ice to minutes
-def toi_to_minutes(toi_str):
-    if not toi_str or ':' not in toi_str:
+skaters = player_stats[player_stats["position"] != "G"].copy()
+goalies = player_stats[player_stats["position"] == "G"].copy()
+
+# Convert TOI to minutes
+def toi_to_minutes(toi):
+    if pd.isna(toi):
         return 0
-    m, s = map(int, toi_str.split(":"))
-    return m + s / 60
+    m, s = toi.split(":")
+    return int(m) + int(s) / 60
 
-df['toi_minutes'] = df['time_on_ice'].apply(toi_to_minutes)
+skaters["toi_minutes"] = skaters["time_on_ice"].apply(toi_to_minutes)
+goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 
-# ------------------ AGGREGATE SKATERS ------------------
-skaters = df[df['position'] != 'G']
-team_stats = skaters.groupby(['game_id', 'team_id']).agg({
-    'goals': 'sum',
-    'assists': 'sum',
-    'points': 'sum',
-    'shots': 'sum',
-    'hits': 'sum',
-    'toi_minutes': 'sum'
-}).reset_index()
+# ---------------------------
+# 3. Aggregate TEAM GAME stats
+# ---------------------------
 
-# ------------------ AGGREGATE GOALIES ------------------
-goalies = df[df['position'] == 'G']
-goalie_stats = goalies.groupby(['game_id', 'team_id']).agg({
-    'goals': 'sum',       # goals against
-    'shots': 'sum',       # shots against
-    'toi_minutes': 'sum'
-}).reset_index().rename(columns={
-    'goals': 'goals_against',
-    'shots': 'shots_against',
-    'toi_minutes': 'goalie_toi'
-})
-
-# Merge skaters + goalies
-team_game_stats = pd.merge(team_stats, goalie_stats, on=['game_id', 'team_id'], how='left')
-for col in ['goals_against', 'shots_against', 'goalie_toi']:
-    team_game_stats[col] = pd.to_numeric(team_game_stats[col], errors='coerce').fillna(0)
-
-# ------------------ ADD HOME/AWAY INFO ------------------
-with get_conn() as conn:
-    games_df = pd.read_sql("SELECT id AS game_id, home_team_id, away_team_id FROM games", conn)
-games_df['game_id'] = pd.to_numeric(games_df['game_id'], errors='coerce')
-
-team_game_stats = team_game_stats.merge(games_df, on='game_id', how='left')
-team_game_stats['home_away'] = team_game_stats.apply(
-    lambda row: 'home' if row['team_id'] == row['home_team_id'] else 'away', axis=1
+team_game_stats = (
+    skaters
+    .groupby(["game_id", "team_id"])
+    .agg(
+        goals=("goals", "sum"),
+        assists=("assists", "sum"),
+        points=("points", "sum"),
+        shots=("shots", "sum"),
+        hits=("hits", "sum"),
+        toi_minutes=("toi_minutes", "sum"),
+    )
+    .reset_index()
 )
 
-# ------------------ MERGE OPPONENT STATS ------------------
-opponent_stats = team_game_stats[['game_id', 'team_id', 'goals', 'shots', 'hits', 'points']].copy()
-opponent_stats = opponent_stats.rename(columns={
-    'team_id': 'opp_team_id',
-    'goals': 'opp_goals',
-    'shots': 'opp_shots',
-    'hits': 'opp_hits',
-    'points': 'opp_points'
-})
-
-team_vs_opponent = pd.merge(
-    team_game_stats, opponent_stats,
-    left_on=['game_id', 'team_id'],
-    right_on=['game_id', 'opp_team_id'],
-    how='left'
+goalie_game_stats = (
+    goalies
+    .groupby(["game_id", "team_id"])
+    .agg(
+        goals_against=("goals", "sum"),
+        shots_against=("shots", "sum"),
+        goalie_toi=("toi_minutes", "sum"),
+    )
+    .reset_index()
 )
 
-# Remove self-merges
-team_vs_opponent = team_vs_opponent[team_vs_opponent['team_id'] != team_vs_opponent['opp_team_id']]
+team_game_stats = team_game_stats.merge(
+    goalie_game_stats,
+    on=["game_id", "team_id"],
+    how="left"
+)
 
-# ------------------ ENSURE NUMERIC TYPES AGAIN ------------------
-all_numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits', 'toi_minutes',
-                    'goals_against', 'shots_against', 'goalie_toi',
-                    'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
-for col in all_numeric_cols:
-    team_vs_opponent[col] = pd.to_numeric(team_vs_opponent[col], errors='coerce').fillna(0)
+# ---------------------------
+# 4. Attach opponent info
+# ---------------------------
 
-# ------------------ COMPUTE ROLLING FEATURES ------------------
-team_vs_opponent = team_vs_opponent.sort_values(['team_id', 'game_id'])
-for col in ['goals', 'goals_against', 'shots', 'hits', 'points']:
-    team_vs_opponent[f'{col}_last5'] = team_vs_opponent.groupby('team_id')[col]\
-        .rolling(5, min_periods=1).mean().reset_index(0, drop=True)
+games_long = pd.concat([
+    games.assign(team_id=games.home_team_id, home_away="home", opp_team_id=games.away_team_id),
+    games.assign(team_id=games.away_team_id, home_away="away", opp_team_id=games.home_team_id)
+])
 
-# ------------------ FINAL DATASET ------------------
-print(team_vs_opponent.head())
+df = team_game_stats.merge(
+    games_long,
+    on=["game_id", "team_id"],
+    how="inner"
+)
+
+# ---------------------------
+# 5. Add opponent stats
+# ---------------------------
+
+opp_stats = team_game_stats.rename(columns={
+    "team_id": "opp_team_id",
+    "goals": "opp_goals",
+    "shots": "opp_shots",
+    "hits": "opp_hits",
+    "points": "opp_points",
+})
+
+df = df.merge(
+    opp_stats[[
+        "game_id",
+        "opp_team_id",
+        "opp_goals",
+        "opp_shots",
+        "opp_hits",
+        "opp_points"
+    ]],
+    on=["game_id", "opp_team_id"],
+    how="left"
+)
+
+# ---------------------------
+# 6. Rolling last-5 averages
+# ---------------------------
+
+df = df.sort_values(["team_id", "date"])
+
+for col in ["goals", "goals_against", "shots", "hits", "points"]:
+    df[f"{col}_last5"] = (
+        df
+        .groupby("team_id")[col]
+        .rolling(5, min_periods=1)
+        .mean()
+        .reset_index(level=0, drop=True)
+    )
+
+# ---------------------------
+# 7. Final dataset
+# ---------------------------
+
+final_cols = [
+    "game_id",
+    "team_id",
+    "home_away",
+    "opp_team_id",
+    "goals",
+    "goals_against",
+    "shots",
+    "hits",
+    "points",
+    "opp_goals",
+    "opp_shots",
+    "opp_hits",
+    "opp_points",
+    "goals_last5",
+    "goals_against_last5",
+    "shots_last5",
+    "hits_last5",
+    "points_last5",
+]
+
+final_df = df[final_cols]
+
+print(final_df.head())
+print(f"Final rows: {len(final_df)}")
