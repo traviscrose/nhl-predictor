@@ -34,6 +34,11 @@ games = pd.read_sql("""
     WHERE g.status = 'final'
 """, engine)
 
+required = {"game_id", "home_team_id", "away_team_id"}
+missing = required - set(games.columns)
+assert not missing, f"Missing columns in games DF: {missing}"
+
+
 # ---------------------------
 # 2. Split skaters & goalies
 # ---------------------------
@@ -91,16 +96,17 @@ team_game_stats = team_game_stats.merge(
 
 games_long = pd.concat([
     games.assign(
-        team_id=games.home_team_id,
+        team_id=games["home_team_id"],
         home_away="home",
-        opp_team_id=games.away_team_id
+        opp_team_id=games["away_team_id"]
     ),
     games.assign(
-        team_id=games.away_team_id,
+        team_id=games["away_team_id"],
         home_away="away",
-        opp_team_id=games.home_team_id
+        opp_team_id=games["home_team_id"]
     )
 ])[["game_id", "date", "team_id", "home_away", "opp_team_id"]]
+
 
 df = team_game_stats.merge(
     games_long,
