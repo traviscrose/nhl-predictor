@@ -114,23 +114,25 @@ df = team_game_stats.merge(
 # ---------------------------
 
 opp_stats = team_game_stats.rename(columns={
-    "team_abbrev": "opp_abbrev",
+    "team_id": "opp_team_id",
     "goals": "opp_goals",
     "shots": "opp_shots",
     "hits": "opp_hits",
     "points": "opp_points",
-})
-
-df = df.merge(
-    opp_stats[[
+})[
+    [
         "game_id",
-        "opp_abbrev",
+        "opp_team_id",
         "opp_goals",
         "opp_shots",
         "opp_hits",
-        "opp_points"
-    ]],
-    on=["game_id", "opp_abbrev"],
+        "opp_points",
+    ]
+]
+
+df = df.merge(
+    opp_stats,
+    on=["game_id", "opp_team_id"],
     how="left"
 )
 
