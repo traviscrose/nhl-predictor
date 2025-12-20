@@ -9,4 +9,4 @@ def get_conn():
         cursor_factory=RealDictCursor
     )
 
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
