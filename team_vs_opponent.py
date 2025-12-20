@@ -114,7 +114,7 @@ df = team_game_stats.merge(
         "game_id", "team_id", "team_abbrev", "home_away", "opp_team_id", "opp_abbrev", "date"
     ]],
     on=["game_id", "team_id"],
-    how="inner"
+    how="left"  # <-- left join preserves all team_game_stats rows
 )
 
 # ---------------------------
