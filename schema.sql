@@ -5,8 +5,6 @@ CREATE TABLE IF NOT EXISTS teams (
     abbreviation TEXT NOT NULL
 );
 
-ALTER TABLE teams DROP CONSTRAINT teams_abbreviation_key;
-
 -- Players table
 CREATE TABLE IF NOT EXISTS players (
     id SERIAL PRIMARY KEY,
