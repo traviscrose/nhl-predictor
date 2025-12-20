@@ -7,8 +7,8 @@ def upsert_player(cur, name, team_id, position):
     cur.execute("""
         INSERT INTO players (name, team_id, position)
         VALUES (%s, %s, %s)
-        ON CONFLICT (name, team_id, position) DO UPDATE
-        SET team_id = EXCLUDED.team_id
+        ON CONFLICT (name, team_id) DO UPDATE
+        SET position = COALESCE(players.position, EXCLUDED.position)
         RETURNING id
     """, (name, team_id, position))
     return cur.fetchone()["id"]
