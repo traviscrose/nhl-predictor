@@ -9,6 +9,7 @@ player_stats = pd.read_sql("""
     SELECT
         ps.game_id,
         ps.team_id,
+        t.abbreviation AS team_abbrev,
         p.position,
         ps.goals,
         ps.assists,
@@ -18,16 +19,19 @@ player_stats = pd.read_sql("""
         ps.time_on_ice
     FROM player_stats ps
     JOIN players p ON ps.player_id = p.id
+    JOIN teams t ON ps.team_id = t.id
 """, engine)
 
 games = pd.read_sql("""
     SELECT
-        id AS game_id,
-        date,
-        home_team_id,
-        away_team_id
-    FROM games
-    WHERE status = 'final'
+        g.id AS game_id,
+        g.date,
+        ht.abbreviation AS home_abbrev,
+        at.abbreviation AS away_abbrev
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    WHERE g.status = 'final'
 """, engine)
 
 # ---------------------------
@@ -37,10 +41,9 @@ games = pd.read_sql("""
 skaters = player_stats[player_stats["position"] != "G"].copy()
 goalies = player_stats[player_stats["position"] == "G"].copy()
 
-# Convert TOI to minutes
 def toi_to_minutes(toi):
     if pd.isna(toi):
-        return 0
+        return 0.0
     m, s = toi.split(":")
     return int(m) + int(s) / 60
 
@@ -53,7 +56,7 @@ goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 
 team_game_stats = (
     skaters
-    .groupby(["game_id", "team_id"])
+    .groupby(["game_id", "team_abbrev"])
     .agg(
         goals=("goals", "sum"),
         assists=("assists", "sum"),
@@ -67,7 +70,7 @@ team_game_stats = (
 
 goalie_game_stats = (
     goalies
-    .groupby(["game_id", "team_id"])
+    .groupby(["game_id", "team_abbrev"])
     .agg(
         goals_against=("goals", "sum"),
         shots_against=("shots", "sum"),
@@ -78,7 +81,7 @@ goalie_game_stats = (
 
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
-    on=["game_id", "team_id"],
+    on=["game_id", "team_abbrev"],
     how="left"
 )
 
@@ -87,13 +90,21 @@ team_game_stats = team_game_stats.merge(
 # ---------------------------
 
 games_long = pd.concat([
-    games.assign(team_id=games.home_team_id, home_away="home", opp_team_id=games.away_team_id),
-    games.assign(team_id=games.away_team_id, home_away="away", opp_team_id=games.home_team_id)
+    games.assign(
+        team_abbrev=games.home_abbrev,
+        opp_abbrev=games.away_abbrev,
+        home_away="home"
+    ),
+    games.assign(
+        team_abbrev=games.away_abbrev,
+        opp_abbrev=games.home_abbrev,
+        home_away="away"
+    )
 ])
 
 df = team_game_stats.merge(
     games_long,
-    on=["game_id", "team_id"],
+    on=["game_id", "team_abbrev"],
     how="inner"
 )
 
@@ -102,7 +113,7 @@ df = team_game_stats.merge(
 # ---------------------------
 
 opp_stats = team_game_stats.rename(columns={
-    "team_id": "opp_team_id",
+    "team_abbrev": "opp_abbrev",
     "goals": "opp_goals",
     "shots": "opp_shots",
     "hits": "opp_hits",
@@ -112,13 +123,13 @@ opp_stats = team_game_stats.rename(columns={
 df = df.merge(
     opp_stats[[
         "game_id",
-        "opp_team_id",
+        "opp_abbrev",
         "opp_goals",
         "opp_shots",
         "opp_hits",
         "opp_points"
     ]],
-    on=["game_id", "opp_team_id"],
+    on=["game_id", "opp_abbrev"],
     how="left"
 )
 
@@ -126,12 +137,12 @@ df = df.merge(
 # 6. Rolling last-5 averages
 # ---------------------------
 
-df = df.sort_values(["team_id", "date"])
+df = df.sort_values(["team_abbrev", "date"])
 
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
         df
-        .groupby("team_id")[col]
+        .groupby("team_abbrev")[col]
         .rolling(5, min_periods=1)
         .mean()
         .reset_index(level=0, drop=True)
@@ -143,9 +154,9 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
 
 final_cols = [
     "game_id",
-    "team_id",
+    "team_abbrev",
     "home_away",
-    "opp_team_id",
+    "opp_abbrev",
     "goals",
     "goals_against",
     "shots",
