@@ -1,5 +1,6 @@
 import pandas as pd
 from db import engine
+from persist_team_game_features import persist_team_game_features
 
 # ---------------------------
 # 1. Load base tables
@@ -36,7 +37,6 @@ required = {"game_id", "home_team_id", "away_team_id"}
 missing = required - set(games.columns)
 assert not missing, f"Missing columns in games DF: {missing}"
 
-
 # ---------------------------
 # 2. Split skaters & goalies
 # ---------------------------
@@ -48,7 +48,7 @@ def toi_to_minutes(toi):
     if pd.isna(toi):
         return 0.0
     m, s = toi.split(":")
-    return int(m) + int(s) / 60
+    return int(m) + int(s)/60
 
 skaters["toi_minutes"] = skaters["time_on_ice"].apply(toi_to_minutes)
 goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
@@ -119,19 +119,13 @@ opp_stats = team_game_stats.rename(columns={
     "shots": "opp_shots",
     "hits": "opp_hits",
     "points": "opp_points",
-})[
-    [
-        "game_id",
-        "opp_team_id",
-        "opp_goals",
-        "opp_shots",
-        "opp_hits",
-        "opp_points",
-    ]
-]
+})
 
 df = df.merge(
-    opp_stats,
+    opp_stats[[
+        "game_id", "opp_team_id",
+        "opp_goals", "opp_shots", "opp_hits", "opp_points"
+    ]],
     on=["game_id", "opp_team_id"],
     how="left"
 )
@@ -151,8 +145,6 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
         .reset_index(level=0, drop=True)
     )
 
-assert "team_id" in df.columns, "team_id missing before final selection"
-
 # ---------------------------
 # 7. Final dataset
 # ---------------------------
@@ -162,7 +154,7 @@ final_cols = [
     "team_id",
     "team_abbrev",
     "home_away",
-    "opp_abbrev",
+    "opp_team_id",
     "goals",
     "goals_against",
     "shots",
@@ -184,6 +176,8 @@ final_df = df[final_cols]
 print(final_df.head())
 print(f"Final rows: {len(final_df)}")
 
-from persist_team_game_features import persist_team_game_features
+# ---------------------------
+# 8. Persist to database
+# ---------------------------
 
 persist_team_game_features(final_df)
