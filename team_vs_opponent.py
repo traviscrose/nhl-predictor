@@ -59,7 +59,7 @@ goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
 
 team_game_stats = (
     skaters
-    .groupby(["game_id", "team_abbrev"])
+    .groupby(["game_id", "team_id"], as_index=False)
     .agg(
         goals=("goals", "sum"),
         assists=("assists", "sum"),
@@ -68,18 +68,16 @@ team_game_stats = (
         hits=("hits", "sum"),
         toi_minutes=("toi_minutes", "sum"),
     )
-    .reset_index()
 )
 
 goalie_game_stats = (
     goalies
-    .groupby(["game_id", "team_abbrev"])
+    .groupby(["game_id", "team_id"], as_index=False)
     .agg(
         goals_against=("goals", "sum"),
         shots_against=("shots", "sum"),
         goalie_toi=("toi_minutes", "sum"),
     )
-    .reset_index()
 )
 
 team_game_stats = team_game_stats.merge(
