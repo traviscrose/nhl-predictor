@@ -11,33 +11,37 @@ if not DATABASE_URL:
 def get_conn():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-# ------------------ LOAD DATA ------------------
+# ------------------ LOAD PLAYER STATS + GAME INFO ------------------
 with get_conn() as conn:
     query = """
-    SELECT ps.*, p.position, g.date AS game_date, g.home_team_id, g.away_team_id
+    SELECT ps.*, p.position, g.id AS game_id, g.home_team_id, g.away_team_id
     FROM player_stats ps
     JOIN players p ON ps.player_id = p.id
     JOIN games g ON ps.game_id = g.id
     """
     df = pd.read_sql(query, conn)
 
-# ------------------ PREPROCESS ------------------
-def toi_to_minutes(toi_str):
-    if not toi_str or ':' not in toi_str:
-        return 0
-    h, m = map(int, toi_str.split(":"))
-    return h * 60 + m
+# ------------------ ENSURE NUMERIC TYPES ------------------
+# Convert IDs to numeric
+df['game_id'] = pd.to_numeric(df['game_id'], errors='coerce')
+df['team_id'] = pd.to_numeric(df['team_id'], errors='coerce')
 
-df['toi_minutes'] = df['time_on_ice'].apply(toi_to_minutes)
-
-# Fill missing numeric stats with 0
+# Convert player stats to numeric
 numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits']
 for col in numeric_cols:
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
+# Convert time_on_ice to minutes
+def toi_to_minutes(toi_str):
+    if not toi_str or ':' not in toi_str:
+        return 0
+    m, s = map(int, toi_str.split(":"))
+    return m + s / 60
+
+df['toi_minutes'] = df['time_on_ice'].apply(toi_to_minutes)
+
 # ------------------ AGGREGATE SKATERS ------------------
 skaters = df[df['position'] != 'G']
-
 team_stats = skaters.groupby(['game_id', 'team_id']).agg({
     'goals': 'sum',
     'assists': 'sum',
@@ -49,7 +53,6 @@ team_stats = skaters.groupby(['game_id', 'team_id']).agg({
 
 # ------------------ AGGREGATE GOALIES ------------------
 goalies = df[df['position'] == 'G']
-
 goalie_stats = goalies.groupby(['game_id', 'team_id']).agg({
     'goals': 'sum',   # goals against
     'shots': 'sum',   # shots against
@@ -61,24 +64,23 @@ goalie_stats = goalies.groupby(['game_id', 'team_id']).agg({
 })
 
 # Merge skaters + goalies
-team_game_stats = pd.merge(
-    team_stats, goalie_stats, on=['game_id', 'team_id'], how='left'
-)
+team_game_stats = pd.merge(team_stats, goalie_stats, on=['game_id', 'team_id'], how='left')
 
-# Fill missing goalie stats with 0 if no goalie played
+# Fill missing goalie stats
 for col in ['goals_against', 'shots_against', 'goalie_toi']:
     team_game_stats[col] = pd.to_numeric(team_game_stats[col], errors='coerce').fillna(0)
 
-# ------------------ HOME/AWAY AND OPPONENT ------------------
+# ------------------ ADD HOME/AWAY INFO ------------------
 with get_conn() as conn:
     games_df = pd.read_sql("SELECT id AS game_id, home_team_id, away_team_id FROM games", conn)
+games_df['game_id'] = pd.to_numeric(games_df['game_id'], errors='coerce')
 
 team_game_stats = team_game_stats.merge(games_df, on='game_id', how='left')
 team_game_stats['home_away'] = team_game_stats.apply(
     lambda row: 'home' if row['team_id'] == row['home_team_id'] else 'away', axis=1
 )
 
-# Merge opponent stats
+# ------------------ MERGE OPPONENT STATS ------------------
 opponent_stats = team_game_stats[['game_id', 'team_id', 'goals', 'shots', 'hits', 'points']].copy()
 opponent_stats = opponent_stats.rename(columns={
     'team_id': 'opp_team_id',
@@ -95,21 +97,17 @@ team_vs_opponent = pd.merge(
     how='left'
 )
 
-# Keep only relevant columns
-team_vs_opponent = team_vs_opponent[
-    ['game_id', 'team_id', 'home_away', 'goals', 'assists', 'points',
-     'shots', 'hits', 'toi_minutes', 'goals_against', 'shots_against', 'goalie_toi',
-     'opp_team_id', 'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
-]
+# Drop rows where team_id == opp_team_id (self-merge)
+team_vs_opponent = team_vs_opponent[team_vs_opponent['team_id'] != team_vs_opponent['opp_team_id']]
 
-# ------------------ ENSURE NUMERIC TYPES ------------------
-numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits', 
-                'toi_minutes', 'goals_against', 'shots_against', 'goalie_toi',
-                'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
-for col in numeric_cols:
+# ------------------ ENSURE NUMERIC TYPES AGAIN ------------------
+all_numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits', 'toi_minutes',
+                    'goals_against', 'shots_against', 'goalie_toi',
+                    'opp_goals', 'opp_shots', 'opp_hits', 'opp_points']
+for col in all_numeric_cols:
     team_vs_opponent[col] = pd.to_numeric(team_vs_opponent[col], errors='coerce').fillna(0)
 
-# ------------------ ROLLING FEATURES ------------------
+# ------------------ COMPUTE ROLLING FEATURES ------------------
 team_vs_opponent = team_vs_opponent.sort_values(['team_id', 'game_id'])
 for col in ['goals', 'goals_against', 'shots', 'hits', 'points']:
     team_vs_opponent[f'{col}_last5'] = team_vs_opponent.groupby('team_id')[col]\
@@ -117,6 +115,3 @@ for col in ['goals', 'goals_against', 'shots', 'hits', 'points']:
 
 # ------------------ FINAL DATASET ------------------
 print(team_vs_opponent.head())
-
-# Optionally save to CSV or Postgres
-# team_vs_opponent.to_csv("team_vs_opponent_features_safe.csv", index=False)
