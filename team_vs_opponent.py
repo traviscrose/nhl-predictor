@@ -82,7 +82,7 @@ goalie_game_stats = (
 
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
-    on=["game_id", "team_abbrev"],
+    on=["game_id", "team_id"],
     how="left"
 )
 
