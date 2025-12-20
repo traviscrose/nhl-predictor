@@ -14,7 +14,19 @@ def get_conn():
 # ------------------ LOAD PLAYER STATS + GAME INFO ------------------
 with get_conn() as conn:
     query = """
-    SELECT ps.*, p.position, g.id AS game_id, g.home_team_id, g.away_team_id
+    SELECT
+        ps.player_id,
+        ps.game_id,
+        ps.team_id,
+        ps.goals,
+        ps.assists,
+        ps.points,
+        ps.shots,
+        ps.hits,
+        ps.time_on_ice,
+        p.position,
+        g.home_team_id,
+        g.away_team_id
     FROM player_stats ps
     JOIN players p ON ps.player_id = p.id
     JOIN games g ON ps.game_id = g.id
@@ -52,8 +64,8 @@ team_stats = skaters.groupby(['game_id', 'team_id']).agg({
 # ------------------ AGGREGATE GOALIES ------------------
 goalies = df[df['position'] == 'G']
 goalie_stats = goalies.groupby(['game_id', 'team_id']).agg({
-    'goals': 'sum',   # goals against
-    'shots': 'sum',   # shots against
+    'goals': 'sum',       # goals against
+    'shots': 'sum',       # shots against
     'toi_minutes': 'sum'
 }).reset_index().rename(columns={
     'goals': 'goals_against',
