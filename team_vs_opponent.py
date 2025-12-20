@@ -1,6 +1,6 @@
 import pandas as pd
 from db import engine
-from persist_team_game_features import persist_team_game_features
+from sqlalchemy import text
 
 # ---------------------------
 # 1. Load base tables
@@ -25,12 +25,12 @@ player_stats = pd.read_sql("""
 
 games = pd.read_sql("""
     SELECT
-        id AS game_id,
-        date,
-        home_team_id,
-        away_team_id
-    FROM public.games
-    WHERE status = 'final'
+        g.id AS game_id,
+        g.date,
+        g.home_team_id,
+        g.away_team_id
+    FROM public.games g
+    WHERE g.status = 'final'
 """, engine)
 
 # ---------------------------
@@ -44,7 +44,7 @@ def toi_to_minutes(toi):
     if pd.isna(toi):
         return 0.0
     m, s = toi.split(":")
-    return int(m) + int(s) / 60
+    return int(m) + int(s)/60
 
 skaters["toi_minutes"] = skaters["time_on_ice"].apply(toi_to_minutes)
 goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
@@ -62,7 +62,7 @@ team_game_stats = (
         points=("points", "sum"),
         shots=("shots", "sum"),
         hits=("hits", "sum"),
-        toi_minutes=("toi_minutes", "sum"),
+        toi_minutes=("toi_minutes", "sum")
     )
 )
 
@@ -72,25 +72,15 @@ goalie_game_stats = (
     .agg(
         goals_against=("goals", "sum"),
         shots_against=("shots", "sum"),
-        goalie_toi=("toi_minutes", "sum"),
+        goalie_toi=("toi_minutes", "sum")
     )
 )
 
-# Merge skaters + goalies stats
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
     on=["game_id", "team_id"],
     how="left"
 )
-
-# Add team abbreviation back in
-team_abbrev_df = player_stats[["team_id", "team_abbrev"]].drop_duplicates()
-team_game_stats = team_game_stats.merge(team_abbrev_df, on="team_id", how="left")
-
-# Fill NaNs in numeric columns (e.g., goals_against can be NaN if no goalie)
-numeric_cols = ["goals", "assists", "points", "shots", "hits",
-                "toi_minutes", "goals_against", "shots_against", "goalie_toi"]
-team_game_stats[numeric_cols] = team_game_stats[numeric_cols].fillna(0)
 
 # ---------------------------
 # 4. Attach opponent info
@@ -107,6 +97,14 @@ df = team_game_stats.merge(
     how="inner"
 )
 
+# Add opponent abbreviations
+team_abbrevs = player_stats[['team_id','team_abbrev']].drop_duplicates()
+df = df.merge(
+    team_abbrevs.rename(columns={'team_id':'opp_team_id','team_abbrev':'opp_abbrev'}),
+    on='opp_team_id',
+    how='left'
+)
+
 # ---------------------------
 # 5. Add opponent stats
 # ---------------------------
@@ -116,31 +114,27 @@ opp_stats = team_game_stats.rename(columns={
     "goals": "opp_goals",
     "shots": "opp_shots",
     "hits": "opp_hits",
-    "points": "opp_points",
-})
+    "points": "opp_points"
+})[["game_id","opp_team_id","opp_goals","opp_shots","opp_hits","opp_points"]]
 
 df = df.merge(
-    opp_stats[["game_id", "opp_team_id", "opp_goals", "opp_shots", "opp_hits", "opp_points"]],
-    on=["game_id", "opp_team_id"],
+    opp_stats,
+    on=["game_id","opp_team_id"],
     how="left"
 )
-
-# Add opponent abbreviation
-team_abbrev_map = team_abbrev_df.set_index("team_id")["team_abbrev"].to_dict()
-df["opp_abbrev"] = df["opp_team_id"].map(team_abbrev_map)
 
 # ---------------------------
 # 6. Rolling last-5 averages
 # ---------------------------
 
-df = df.sort_values(["team_id", "date"])
+df = df.sort_values(["team_id","date"])
 
-for col in ["goals", "goals_against", "shots", "hits", "points"]:
+for col in ["goals","goals_against","shots","hits","points"]:
     df[f"{col}_last5"] = (
         df.groupby("team_id")[col]
-          .rolling(5, min_periods=1)
-          .mean()
-          .reset_index(level=0, drop=True)
+        .rolling(5, min_periods=1)
+        .mean()
+        .reset_index(level=0,drop=True)
     )
 
 # ---------------------------
@@ -166,7 +160,7 @@ final_cols = [
     "goals_against_last5",
     "shots_last5",
     "hits_last5",
-    "points_last5",
+    "points_last5"
 ]
 
 final_df = df[final_cols]
@@ -175,7 +169,47 @@ print(final_df.head())
 print(f"Final rows: {len(final_df)}")
 
 # ---------------------------
-# 8. Persist to database
+# 8. Persist function
 # ---------------------------
+
+def persist_team_game_features(df):
+    numeric_cols = df.select_dtypes(include="number").columns
+    df[numeric_cols] = df[numeric_cols].fillna(0)
+
+    upsert_sql = """
+    INSERT INTO public.team_vs_opponent (
+        game_id, team_id, team_abbrev, home_away, opp_abbrev,
+        goals, goals_against, shots, hits, points,
+        opp_goals, opp_shots, opp_hits, opp_points,
+        goals_last5, goals_against_last5, shots_last5, hits_last5, points_last5
+    )
+    VALUES (
+        :game_id, :team_id, :team_abbrev, :home_away, :opp_abbrev,
+        :goals, :goals_against, :shots, :hits, :points,
+        :opp_goals, :opp_shots, :opp_hits, :opp_points,
+        :goals_last5, :goals_against_last5, :shots_last5, :hits_last5, :points_last5
+    )
+    ON CONFLICT (game_id, team_id) DO UPDATE SET
+        goals = EXCLUDED.goals,
+        goals_against = EXCLUDED.goals_against,
+        shots = EXCLUDED.shots,
+        hits = EXCLUDED.hits,
+        points = EXCLUDED.points,
+        opp_goals = EXCLUDED.opp_goals,
+        opp_shots = EXCLUDED.opp_shots,
+        opp_hits = EXCLUDED.opp_hits,
+        opp_points = EXCLUDED.opp_points,
+        goals_last5 = EXCLUDED.goals_last5,
+        goals_against_last5 = EXCLUDED.goals_against_last5,
+        shots_last5 = EXCLUDED.shots_last5,
+        hits_last5 = EXCLUDED.hits_last5,
+        points_last5 = EXCLUDED.points_last5
+    """
+
+    with engine.begin() as conn:
+        for _, row in df.iterrows():
+            conn.execute(text(upsert_sql), row.to_dict())
+
+    print(f"Persisted {len(df)} rows into public.team_vs_opponent")
 
 persist_team_game_features(final_df)
