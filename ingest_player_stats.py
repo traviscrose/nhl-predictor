@@ -65,7 +65,7 @@ def ingest_player_stats():
                 last = p.get("lastName", {}).get("default", "")
                 name = f"{first} {last}".strip()
 
-                stats = p.get("stats", {}).get("skaterStats")
+                stats = p.get("stats")
                 if not stats:
                     continue
 
