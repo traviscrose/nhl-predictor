@@ -10,3 +10,10 @@ engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True
 )
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    return psycopg2.connect(
+        os.environ["DATABASE_URL"],
+        cursor_factory=RealDictCursor
+    )
