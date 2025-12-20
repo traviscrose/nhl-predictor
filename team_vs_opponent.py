@@ -91,21 +91,22 @@ team_game_stats = team_game_stats.merge(
 
 games_long = pd.concat([
     games.assign(
-        team_abbrev=games.home_abbrev,
-        opp_abbrev=games.away_abbrev,
-        home_away="home"
+        team_id=games.home_team_id,
+        home_away="home",
+        opp_team_id=games.away_team_id
     ),
     games.assign(
-        team_abbrev=games.away_abbrev,
-        opp_abbrev=games.home_abbrev,
-        home_away="away"
+        team_id=games.away_team_id,
+        home_away="away",
+        opp_team_id=games.home_team_id
     )
-])
+])[["game_id", "date", "team_id", "home_away", "opp_team_id"]]
 
 df = team_game_stats.merge(
     games_long,
-    on=["game_id", "team_abbrev"],
-    how="inner"
+    on=["game_id", "team_id"],
+    how="inner",
+    validate="one_to_one"
 )
 
 # ---------------------------
@@ -147,6 +148,8 @@ for col in ["goals", "goals_against", "shots", "hits", "points"]:
         .mean()
         .reset_index(level=0, drop=True)
     )
+
+assert "team_id" in df.columns, "team_id missing before final selection"
 
 # ---------------------------
 # 7. Final dataset
