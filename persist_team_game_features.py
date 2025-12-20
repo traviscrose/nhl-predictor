@@ -1,3 +1,4 @@
+from db import engine
 from sqlalchemy import text
 import numpy as np
 
