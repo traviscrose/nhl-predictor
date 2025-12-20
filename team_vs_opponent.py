@@ -177,3 +177,7 @@ final_df = df[final_cols]
 
 print(final_df.head())
 print(f"Final rows: {len(final_df)}")
+
+from persist_team_game_features import persist_team_game_features
+
+persist_team_game_features(final_df)
