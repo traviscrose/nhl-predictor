@@ -2,29 +2,9 @@ import pandas as pd
 from db import engine
 from persist_team_game_features import persist_team_game_features
 
-# ---------------------------
-# 1. Load base tables
-# ---------------------------
-
-player_stats = pd.read_sql("""
-    SELECT
-        ps.game_id,
-        ps.team_id,
-        t.abbreviation AS team_abbrev,
-        p.position,
-        ps.goals,
-        ps.assists,
-        ps.points,
-        ps.shots,
-        ps.hits,
-        ps.time_on_ice
-    FROM public.player_stats ps
-    JOIN public.games g ON ps.game_id = g.id
-    JOIN public.players p ON ps.player_id = p.id
-    JOIN public.teams t ON ps.team_id = t.id
-    WHERE g.status = 'final'
-""", engine)
-
+# -------------------------------------------------
+# 1. Load FINAL games (single source of truth)
+# -------------------------------------------------
 
 games = pd.read_sql("""
     SELECT
@@ -40,12 +20,30 @@ games = pd.read_sql("""
     WHERE g.status = 'final'
 """, engine)
 
-# ---------------------------
-# 2. Split skaters & goalies
-# ---------------------------
+# -------------------------------------------------
+# 2. Load player stats ONLY for final games
+# -------------------------------------------------
 
-skaters = player_stats[player_stats["position"] != "G"].copy()
-goalies = player_stats[player_stats["position"] == "G"].copy()
+player_stats = pd.read_sql("""
+    SELECT
+        ps.game_id,
+        ps.team_id,
+        p.position,
+        ps.goals,
+        ps.assists,
+        ps.points,
+        ps.shots,
+        ps.hits,
+        ps.time_on_ice
+    FROM public.player_stats ps
+    JOIN public.games g ON ps.game_id = g.id
+    JOIN public.players p ON ps.player_id = p.id
+    WHERE g.status = 'final'
+""", engine)
+
+# -------------------------------------------------
+# 3. TOI helper
+# -------------------------------------------------
 
 def toi_to_minutes(toi):
     if pd.isna(toi):
@@ -53,12 +51,18 @@ def toi_to_minutes(toi):
     m, s = toi.split(":")
     return int(m) + int(s) / 60
 
-skaters["toi_minutes"] = skaters["time_on_ice"].apply(toi_to_minutes)
-goalies["toi_minutes"] = goalies["time_on_ice"].apply(toi_to_minutes)
+player_stats["toi_minutes"] = player_stats["time_on_ice"].apply(toi_to_minutes)
 
-# ---------------------------
-# 3. Aggregate TEAM GAME stats
-# ---------------------------
+# -------------------------------------------------
+# 4. Split skaters / goalies
+# -------------------------------------------------
+
+skaters = player_stats[player_stats["position"] != "G"]
+goalies = player_stats[player_stats["position"] == "G"]
+
+# -------------------------------------------------
+# 5. Team-game aggregation (NO abbrevs here)
+# -------------------------------------------------
 
 team_game_stats = (
     skaters
@@ -86,12 +90,12 @@ goalie_game_stats = (
 team_game_stats = team_game_stats.merge(
     goalie_game_stats,
     on=["game_id", "team_id"],
-    how="left"
+    how="left",
 )
 
-# ---------------------------
-# 4. Attach opponent info (ID-SAFE)
-# ---------------------------
+# -------------------------------------------------
+# 6. Build game-team perspective (games_long)
+# -------------------------------------------------
 
 games_long = pd.concat(
     [
@@ -113,102 +117,91 @@ games_long = pd.concat(
     ignore_index=True,
 )
 
-# 🔒 Enforce ID types (critical)
-team_game_stats["team_id"] = team_game_stats["team_id"].astype(int)
-team_game_stats["game_id"] = team_game_stats["game_id"].astype(int)
-games_long["team_id"] = games_long["team_id"].astype(int)
-games_long["game_id"] = games_long["game_id"].astype(int)
+# -------------------------------------------------
+# 7. Merge stats with game context (ID-safe)
+# -------------------------------------------------
 
-print("team_game_stats team_id sample:")
-print(team_game_stats["team_id"].unique()[:10])
-
-print("\ngames_long team_id sample:")
-print(games_long["team_id"].unique()[:10])
-
-print("\nIntersection size:")
-print(
-    len(
-        set(team_game_stats["team_id"].unique())
-        & set(games_long["team_id"].unique())
-    )
-)
-
-
-# 🔑 Merge ONLY on IDs
 df = team_game_stats.merge(
     games_long[
         [
             "game_id",
             "team_id",
-            "team_abbrev",
             "opp_team_id",
+            "team_abbrev",
             "opp_abbrev",
             "home_away",
             "date",
         ]
     ],
     on=["game_id", "team_id"],
-    how="inner",  # safe now
+    how="inner",
     validate="one_to_one",
 )
 
-# 🚨 Hard fail if opponent missing
-if df["opp_team_id"].isna().any():
-    raise ValueError("❌ opp_team_id missing — games_long merge failed")
+# 🔒 Invariants (fail fast)
+assert df["opp_team_id"].notna().all()
+assert df["team_abbrev"].notna().all()
+assert df["opp_abbrev"].notna().all()
+assert df["team_id"].ne(df["opp_team_id"]).all()
 
-# ---------------------------
-# 5. Add opponent stats
-# ---------------------------
+# -------------------------------------------------
+# 8. Opponent stats (NO collisions)
+# -------------------------------------------------
 
-opp_stats = team_game_stats.rename(
-    columns={
+opp_stats = (
+    team_game_stats
+    .rename(columns={
         "team_id": "opp_team_id",
         "goals": "opp_goals",
         "shots": "opp_shots",
         "hits": "opp_hits",
         "points": "opp_points",
-    }
-)[
-    [
-        "game_id",
-        "opp_team_id",
-        "opp_goals",
-        "opp_shots",
-        "opp_hits",
-        "opp_points",
-    ]
-]
+    })
+    [["game_id", "opp_team_id", "opp_goals", "opp_shots", "opp_hits", "opp_points"]]
+)
 
 df = df.merge(
     opp_stats,
     on=["game_id", "opp_team_id"],
     how="left",
+    validate="many_to_one",
 )
 
-# ---------------------------
-# 6. Rolling last-5 averages
-# ---------------------------
+# -------------------------------------------------
+# 9. Rolling last-5 averages
+# -------------------------------------------------
 
 df = df.sort_values(["team_id", "date"])
 
 for col in ["goals", "goals_against", "shots", "hits", "points"]:
     df[f"{col}_last5"] = (
         df.groupby("team_id")[col]
-          .rolling(5, min_periods=1)
-          .mean()
-          .reset_index(level=0, drop=True)
+        .rolling(5, min_periods=1)
+        .mean()
+        .reset_index(level=0, drop=True)
     )
 
-# ---------------------------
-# 7. Final dataset
-# ---------------------------
+# -------------------------------------------------
+# 10. Safe numeric fill (NEVER IDs or text)
+# -------------------------------------------------
 
-# Ensure all final columns exist in df
+numeric_cols = [
+    c for c in df.columns
+    if df[c].dtype.kind in "fi" and not c.endswith("_id")
+]
+
+df[numeric_cols] = df[numeric_cols].fillna(0)
+
+# -------------------------------------------------
+# 11. Final dataset
+# -------------------------------------------------
+
 final_cols = [
     "game_id",
     "team_id",
     "team_abbrev",
     "home_away",
+    "opp_team_id",
     "opp_abbrev",
     "goals",
     "goals_against",
@@ -226,18 +219,13 @@ final_cols = [
     "points_last5",
 ]
 
-# Fill missing columns with NaN if they somehow don't exist
-for col in final_cols:
-    if col not in df.columns:
-        df[col] = float("nan")
-
 final_df = df[final_cols]
 
 print(final_df.head())
 print(f"Final rows: {len(final_df)}")
 
-# ---------------------------
-# 8. Persist to DB
-# ---------------------------
+# -------------------------------------------------
+# 12. Persist
+# -------------------------------------------------
 
 persist_team_game_features(final_df)
