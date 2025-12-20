@@ -22,11 +22,9 @@ with get_conn() as conn:
     df = pd.read_sql(query, conn)
 
 # ------------------ ENSURE NUMERIC TYPES ------------------
-# Convert IDs to numeric
 df['game_id'] = pd.to_numeric(df['game_id'], errors='coerce')
 df['team_id'] = pd.to_numeric(df['team_id'], errors='coerce')
 
-# Convert player stats to numeric
 numeric_cols = ['goals', 'assists', 'points', 'shots', 'hits']
 for col in numeric_cols:
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -65,8 +63,6 @@ goalie_stats = goalies.groupby(['game_id', 'team_id']).agg({
 
 # Merge skaters + goalies
 team_game_stats = pd.merge(team_stats, goalie_stats, on=['game_id', 'team_id'], how='left')
-
-# Fill missing goalie stats
 for col in ['goals_against', 'shots_against', 'goalie_toi']:
     team_game_stats[col] = pd.to_numeric(team_game_stats[col], errors='coerce').fillna(0)
 
@@ -97,7 +93,7 @@ team_vs_opponent = pd.merge(
     how='left'
 )
 
-# Drop rows where team_id == opp_team_id (self-merge)
+# Remove self-merges
 team_vs_opponent = team_vs_opponent[team_vs_opponent['team_id'] != team_vs_opponent['opp_team_id']]
 
 # ------------------ ENSURE NUMERIC TYPES AGAIN ------------------
