@@ -94,7 +94,7 @@ def ingest_schedule(start_date, end_date):
                         nhl_game_id, date, home_team_id, away_team_id,
                         home_score, away_score, status, season
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s, %s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (nhl_game_id) DO UPDATE
                     SET
                         status = EXCLUDED.status,
