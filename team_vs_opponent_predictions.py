@@ -1,12 +1,32 @@
 import pandas as pd
-import numpy as np
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from db import engine
+from sqlalchemy import create_engine
+from sklearn.linear_model import PoissonRegressor
+from sklearn.metrics import mean_absolute_error
 
-# -----------------------------
-# 1. Load features from DB and join games for date
-# -----------------------------
+# -------------------------------------------------
+# Config
+# -------------------------------------------------
+
+DB_URL = "postgresql://..."  # your existing DB url
+
+FEATURES = [
+    "shots_last5",
+    "hits_last5",
+    "points_last5",
+    "opp_shots_last5",
+    "opp_hits_last5",
+    "opp_points_last5",
+    "home_away",
+]
+
+TARGET = "goals_for"
+
+# -------------------------------------------------
+# 1. Load data (season comes from games table)
+# -------------------------------------------------
+
+engine = create_engine(DB_URL)
+
 query = """
 SELECT
     t.game_id,
@@ -14,116 +34,126 @@ SELECT
     t.team_abbrev,
     t.home_away,
     t.opp_team_id,
-    t.opp_abbrev,
-    t.goals,
+    t.opp_team_abbrev,
+    t.goals_for,
     t.goals_against,
-    t.shots,
-    t.hits,
-    t.points,
-    t.opp_goals,
-    t.opp_shots,
-    t.opp_hits,
-    t.opp_points,
-    g.date
+    t.shots_last5,
+    t.hits_last5,
+    t.points_last5,
+    t.opp_shots_last5,
+    t.opp_hits_last5,
+    t.opp_points_last5,
+    g.date,
+    g.season
 FROM team_vs_opponent t
-JOIN games g ON t.game_id = g.id
-ORDER BY t.team_id, g.date ASC;
+JOIN games g
+  ON t.game_id = g.id
+ORDER BY g.date;
 """
+
 df = pd.read_sql(query, engine)
 df["date"] = pd.to_datetime(df["date"])
 
-# -----------------------------
-# 2. Determine season for each game
-# -----------------------------
-df["season_year"] = df["date"].dt.year
-df["season_month"] = df["date"].dt.month
-# Season starts in October
-df["season_start"] = np.where(df["season_month"] < 7, df["season_year"] - 1, df["season_year"])
+# -------------------------------------------------
+# 2. Sanity checks (fail fast)
+# -------------------------------------------------
 
-# -----------------------------
-# 3. Compute rolling last-5 averages for team stats
-# -----------------------------
-df = df.sort_values(["team_id", "date"])
+required_cols = FEATURES + [TARGET, "season", "date"]
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    raise RuntimeError(f"Missing required columns: {missing}")
 
-team_cols = ["goals", "goals_against", "shots", "hits", "points"]
-opp_cols  = ["opp_goals", "opp_shots", "opp_hits", "opp_points"]
+if df.empty:
+    raise RuntimeError("Loaded dataframe is empty")
 
-for col in team_cols:
-    df[f"{col}_last5"] = df.groupby("team_id")[col].rolling(5, min_periods=1).mean().reset_index(level=0, drop=True)
+if df["season"].isna().any():
+    raise RuntimeError("Null season values detected")
 
-for col in opp_cols:
-    df[f"{col}_last5"] = df.groupby("team_id")[col].rolling(5, min_periods=1).mean().reset_index(level=0, drop=True)
+print("Loaded rows:", len(df))
+print("Seasons:", sorted(df["season"].unique()))
+print("Rows per season:")
+print(df.groupby("season").size())
 
-# -----------------------------
-# 4. Compute delta features
-# -----------------------------
-df["goal_diff"]  = df["goals"] - df["opp_goals"]
-df["goals_last5_diff"]  = df["goals_last5"] - df["opp_goals_last5"]
-df["shots_last5_diff"]  = df["shots_last5"] - df["opp_shots_last5"]
-df["hits_last5_diff"]   = df["hits_last5"] - df["opp_hits_last5"]
-df["points_last5_diff"] = df["points_last5"] - df["opp_points_last5"]
+# -------------------------------------------------
+# 3. Preprocessing
+# -------------------------------------------------
 
-features = [
-    "home_away",
-    "goals_last5_diff",
-    "shots_last5_diff",
-    "hits_last5_diff",
-    "points_last5_diff"
-]
-
-# Convert home_away to numeric
+# Encode home/away
 df["home_away"] = df["home_away"].map({"home": 1, "away": 0})
 
-# -----------------------------
-# 5. Rolling season-by-season backtesting
-# -----------------------------
+# Fill remaining numeric nulls defensively
+numeric_cols = df.select_dtypes(include="number").columns
+df[numeric_cols] = df[numeric_cols].fillna(0)
+
+# -------------------------------------------------
+# 4. Rolling season backtest
+# -------------------------------------------------
+
+seasons = sorted(df["season"].unique())
 results = []
-seasons = sorted(df["season_start"].unique())
-print(df["season_start"].unique())
-print("Seasons:", seasons)
 
 for i in range(1, len(seasons)):
-    train_seasons = seasons[:i]      # all prior seasons
-    test_season   = seasons[i]       # next season
-    
-    train = df[df["season_start"].isin(train_seasons)]
-    test  = df[df["season_start"] == test_season]
-    
-    X_train = train[features]
-    y_train = train["goal_diff"]
-    X_test  = test[features]
-    y_test  = test["goal_diff"]
-    
-    model = Ridge(alpha=1.0)
+    train_seasons = seasons[:i]
+    test_season = seasons[i]
+
+    train = df[df["season"].isin(train_seasons)]
+    test = df[df["season"] == test_season]
+
+    if train.empty or test.empty:
+        print(f"Skipping season {test_season} (no data)")
+        continue
+
+    X_train = train[FEATURES]
+    y_train = train[TARGET]
+    X_test = test[FEATURES]
+    y_test = test[TARGET]
+
+    model = PoissonRegressor(alpha=0.001, max_iter=1000)
     model.fit(X_train, y_train)
-    
-    y_pred = model.predict(X_test)
-    
-    rmse = mean_squared_error(y_test, y_pred, squared=False)
-    mae  = mean_absolute_error(y_test, y_pred)
-    
-    print(f"Season {test_season}-{test_season+1} | RMSE: {rmse:.3f} | MAE: {mae:.3f}")
-    
-    season_results = test.copy()
-    season_results["pred_goal_diff"] = y_pred
-    season_results["pred_win_prob"]  = 1 / (1 + np.exp(-y_pred))  # sigmoid
-    season_results["season_tested"] = f"{test_season}-{test_season+1}"
-    results.append(season_results)
 
+    test = test.copy()
+    test["pred_goals"] = model.predict(X_test)
 
+    mae = mean_absolute_error(y_test, test["pred_goals"])
 
+    print(
+        f"Train seasons {train_seasons} → "
+        f"Test season {test_season} | MAE = {mae:.3f}"
+    )
 
-# -----------------------------
-# 6. Concatenate all season predictions
-# -----------------------------
+    results.append(
+        test.assign(
+            test_season=test_season,
+            train_seasons=",".join(map(str, train_seasons)),
+            mae=mae,
+        )
+    )
+
+# -------------------------------------------------
+# 5. Finalize results
+# -------------------------------------------------
+
+if not results:
+    raise RuntimeError("No backtest results generated")
+
 all_results = pd.concat(results, ignore_index=True)
 
-# -----------------------------
-# 7. (Optional) Save predictions back to DB
-# -----------------------------
-# all_results.to_sql("team_vs_opponent_predictions", engine, if_exists="replace", index=False)
+print("\nBacktest summary:")
+print(
+    all_results
+    .groupby("test_season")["mae"]
+    .mean()
+    .round(3)
+)
 
-# -----------------------------
-# 8. Quick check
-# -----------------------------
-print(all_results[["game_id", "team_id", "goal_diff", "pred_goal_diff", "pred_win_prob"]].head())
+# -------------------------------------------------
+# 6. (Optional) Persist predictions
+# -------------------------------------------------
+# all_results.to_sql(
+#     "team_vs_opponent_backtest_results",
+#     engine,
+#     if_exists="replace",
+#     index=False,
+# )
+
+print("\nDone.")
