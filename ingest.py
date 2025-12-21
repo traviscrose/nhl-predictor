@@ -130,4 +130,4 @@ def ingest_schedule(start_date, end_date):
 
 if __name__ == "__main__":
     # Example: ingest from Oct 7, 2025 to Dec 19, 2025
-    ingest_schedule("2023-10-07", "2025-12-19")
+    ingest_schedule("2021-10-01", "2025-12-19")
