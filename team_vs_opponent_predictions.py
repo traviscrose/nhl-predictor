@@ -2,12 +2,15 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import mean_absolute_error
+import os
+from sqlalchemy import create_engine
 
 # -------------------------------------------------
 # Config
 # -------------------------------------------------
 
-DB_URL = "postgresql://..."  # your existing DB url
+DB_URL = os.environ["DATABASE_URL"]
+engine = create_engine(DB_URL)
 
 FEATURES = [
     "shots_last5",
