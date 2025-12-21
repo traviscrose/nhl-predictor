@@ -5,7 +5,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from db import engine
 
 # -----------------------------
-# 1. Load final features from DB and join with games to get date
+# 1. Load features from DB and join games for date
 # -----------------------------
 query = """
 SELECT
@@ -24,17 +24,11 @@ SELECT
     t.opp_shots,
     t.opp_hits,
     t.opp_points,
-    t.goals_last5,
-    t.goals_against_last5,
-    t.shots_last5,
-    t.hits_last5,
-    t.points_last5,
-    g.date
+    t.date
 FROM team_vs_opponent t
 JOIN games g ON t.game_id = g.id
-ORDER BY g.date ASC;
+ORDER BY t.team_id, t.date ASC;
 """
-
 df = pd.read_sql(query, engine)
 df["date"] = pd.to_datetime(df["date"])
 
@@ -43,17 +37,30 @@ df["date"] = pd.to_datetime(df["date"])
 # -----------------------------
 df["season_year"] = df["date"].dt.year
 df["season_month"] = df["date"].dt.month
-
-# If month < 7 (summer), assign previous year as season start
+# Season starts in October
 df["season_start"] = np.where(df["season_month"] < 7, df["season_year"] - 1, df["season_year"])
 
 # -----------------------------
-# 3. Compute target and delta features
+# 3. Compute rolling last-5 averages for team stats
 # -----------------------------
-df["goal_diff"] = df["goals"] - df["opp_goals"]
+df = df.sort_values(["team_id", "date"])
+
+team_cols = ["goals", "goals_against", "shots", "hits", "points"]
+opp_cols  = ["opp_goals", "opp_shots", "opp_hits", "opp_points"]
+
+for col in team_cols:
+    df[f"{col}_last5"] = df.groupby("team_id")[col].rolling(5, min_periods=1).mean().reset_index(level=0, drop=True)
+
+for col in opp_cols:
+    df[f"{col}_last5"] = df.groupby("team_id")[col].rolling(5, min_periods=1).mean().reset_index(level=0, drop=True)
+
+# -----------------------------
+# 4. Compute delta features
+# -----------------------------
+df["goal_diff"]  = df["goals"] - df["opp_goals"]
 df["goals_last5_diff"]  = df["goals_last5"] - df["opp_goals_last5"]
 df["shots_last5_diff"]  = df["shots_last5"] - df["opp_shots_last5"]
-df["hits_last5_diff"]   = df["hits_last5"]  - df["opp_hits_last5"]
+df["hits_last5_diff"]   = df["hits_last5"] - df["opp_hits_last5"]
 df["points_last5_diff"] = df["points_last5"] - df["opp_points_last5"]
 
 features = [
@@ -68,14 +75,14 @@ features = [
 df["home_away"] = df["home_away"].map({"home": 1, "away": 0})
 
 # -----------------------------
-# 4. Rolling season-by-season backtesting
+# 5. Rolling season-by-season backtesting
 # -----------------------------
 results = []
-
 seasons = sorted(df["season_start"].unique())
+
 for i in range(1, len(seasons)):
-    train_seasons = seasons[:i]
-    test_season   = seasons[i]
+    train_seasons = seasons[:i]      # all prior seasons
+    test_season   = seasons[i]       # next season
     
     train = df[df["season_start"].isin(train_seasons)]
     test  = df[df["season_start"] == test_season]
@@ -102,11 +109,16 @@ for i in range(1, len(seasons)):
     results.append(season_results)
 
 # -----------------------------
-# 5. Concatenate all season predictions
+# 6. Concatenate all season predictions
 # -----------------------------
 all_results = pd.concat(results, ignore_index=True)
 
 # -----------------------------
-# 6. (Optional) Save predictions back to DB
+# 7. (Optional) Save predictions back to DB
 # -----------------------------
 # all_results.to_sql("team_vs_opponent_predictions", engine, if_exists="replace", index=False)
+
+# -----------------------------
+# 8. Quick check
+# -----------------------------
+print(all_results[["game_id", "team_id", "goal_diff", "pred_goal_diff", "pred_win_prob"]].head())
