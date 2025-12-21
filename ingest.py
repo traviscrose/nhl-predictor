@@ -86,13 +86,15 @@ def ingest_schedule(start_date, end_date):
                 home_team_id = team_cache[game["homeTeam"]["abbrev"]]
                 away_team_id = team_cache[game["awayTeam"]["abbrev"]]
 
+                season = game.get("season")  # New line: get the season from the API
+
                 # UPSERT GAME (insert OR update)
                 cur.execute("""
                     INSERT INTO games (
                         nhl_game_id, date, home_team_id, away_team_id,
-                        home_score, away_score, status
+                        home_score, away_score, status, season
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s, %s)
                     ON CONFLICT (nhl_game_id) DO UPDATE
                     SET
                         status = EXCLUDED.status,
@@ -103,7 +105,8 @@ def ingest_schedule(start_date, end_date):
                         away_score = CASE
                             WHEN EXCLUDED.status = 'final' THEN EXCLUDED.away_score
                             ELSE games.away_score
-                        END
+                        END,
+                        season = EXCLUDED.season
                 """, (
                     nhl_game_id,
                     game_date,
@@ -111,7 +114,8 @@ def ingest_schedule(start_date, end_date):
                     away_team_id,
                     home_score,
                     away_score,
-                    status
+                    status,
+                    season
                 ))
 
                 print(f"Inserted game {nhl_game_id}: {game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} ({status})")
