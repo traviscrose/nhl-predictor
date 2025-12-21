@@ -37,7 +37,7 @@ SELECT
     t.team_abbrev,
     t.home_away,
     t.opp_team_id,
-    t.opp_team_abbrev,
+    t.opp_abbrev,
     t.goals_for,
     t.goals_against,
     t.shots_last5,
