@@ -24,7 +24,7 @@ SELECT
     t.opp_shots,
     t.opp_hits,
     t.opp_points,
-    t.date
+    g.date
 FROM team_vs_opponent t
 JOIN games g ON t.game_id = g.id
 ORDER BY t.team_id, t.date ASC;
