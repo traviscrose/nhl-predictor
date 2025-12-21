@@ -108,6 +108,11 @@ for i in range(1, len(seasons)):
     season_results["season_tested"] = f"{test_season}-{test_season+1}"
     results.append(season_results)
 
+    print(df["season_start"].unique())
+    seasons = sorted(df["season_start"].unique())
+    print("Seasons:", seasons)
+
+
 # -----------------------------
 # 6. Concatenate all season predictions
 # -----------------------------
