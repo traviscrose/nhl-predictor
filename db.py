@@ -1,12 +1,30 @@
+import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-DB_USER = "nhl_user"
-DB_PASSWORD = "nhl_pass"
-DB_HOST = "NUC-nhl-predictor-db"
-DB_PORT = "5432"
-DB_NAME = "nhl_predictor"
+# Load environment variables from .env
+load_dotenv()
+
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+
+# Safety check (fails fast if misconfigured)
+required_vars = {
+    "DB_USER": DB_USER,
+    "DB_PASSWORD": DB_PASSWORD,
+    "DB_HOST": DB_HOST,
+    "DB_PORT": DB_PORT,
+    "DB_NAME": DB_NAME,
+}
+
+missing = [k for k, v in required_vars.items() if not v]
+if missing:
+    raise RuntimeError(f"Missing required environment variables: {missing}")
 
 DATABASE_URL = (
     f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
@@ -27,3 +45,4 @@ def get_conn():
         port=DB_PORT,
         cursor_factory=RealDictCursor
     )
+
