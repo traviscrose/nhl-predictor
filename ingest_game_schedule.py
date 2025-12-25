@@ -58,6 +58,10 @@ def map_game_state(game_state):
 def ingest_schedule(start_date, end_date):
     """
     Ingest NHL games from the API into local Postgres database.
+    Smart ingestion:
+      - Skips games that are already final
+      - Updates games only if status or score changed
+      - Inserts new games
     """
     conn = get_conn()
     cur = conn.cursor()
@@ -65,6 +69,7 @@ def ingest_schedule(start_date, end_date):
     team_cache = {}
     season_cache = {}
     total_inserted = 0
+    total_updated = 0
     current_date = start_date
 
     while current_date <= end_date:
@@ -115,7 +120,48 @@ def ingest_schedule(start_date, end_date):
                     season_cache[season_code] = upsert_season(cur, season_code)
                 season_id = season_cache[season_code]
 
-                # --- Upsert Game ---
+                # --- Smart Upsert Game ---
+                cur.execute("""
+                    SELECT status, home_score, away_score
+                    FROM games
+                    WHERE nhl_game_id = %s
+                """, (nhl_game_id,))
+                existing_game = cur.fetchone()
+
+                if existing_game:
+                    if existing_game['status'] == 'final':
+                        print(f"Skipping final game {nhl_game_id}")
+                        continue
+
+                    # Only update if status or score has changed
+                    if status != existing_game['status'] or \
+                       (status == 'final' and (home_score != existing_game['home_score'] or away_score != existing_game['away_score'])):
+                        cur.execute("""
+                            UPDATE games
+                            SET
+                                status = %s,
+                                home_score = CASE WHEN %s = 'final' THEN %s ELSE home_score END,
+                                away_score = CASE WHEN %s = 'final' THEN %s ELSE away_score END,
+                                season_id = %s,
+                                venue = %s,
+                                game_type = %s
+                            WHERE nhl_game_id = %s
+                        """, (
+                            status,
+                            status, home_score,
+                            status, away_score,
+                            season_id,
+                            venue,
+                            game_type,
+                            nhl_game_id
+                        ))
+                        total_updated += 1
+                        print(f"Updated game {nhl_game_id}: status changed to {status}")
+                    else:
+                        print(f"No update needed for game {nhl_game_id}")
+                    continue  # skip to next game
+
+                # Insert new game if it doesn’t exist
                 cur.execute("""
                     INSERT INTO games (
                         nhl_game_id,
@@ -130,22 +176,6 @@ def ingest_schedule(start_date, end_date):
                         game_type
                     )
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (nhl_game_id) DO UPDATE
-                    SET
-                        status = EXCLUDED.status,
-                        home_score = CASE
-                            WHEN EXCLUDED.status = 'final'
-                            THEN EXCLUDED.home_score
-                            ELSE games.home_score
-                        END,
-                        away_score = CASE
-                            WHEN EXCLUDED.status = 'final'
-                            THEN EXCLUDED.away_score
-                            ELSE games.away_score
-                        END,
-                        season_id = EXCLUDED.season_id,
-                        venue = EXCLUDED.venue,
-                        game_type = EXCLUDED.game_type
                 """, (
                     nhl_game_id,
                     season_id,
@@ -158,10 +188,9 @@ def ingest_schedule(start_date, end_date):
                     venue,
                     game_type
                 ))
-
                 total_inserted += 1
                 print(
-                    f"Processed game {nhl_game_id}: "
+                    f"Inserted new game {nhl_game_id}: "
                     f"{game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} "
                     f"({status}) season={season_code}"
                 )
@@ -174,7 +203,8 @@ def ingest_schedule(start_date, end_date):
     conn.commit()
     cur.close()
     conn.close()
-    print(f"Finished ingestion: {total_inserted} games processed.")
+    print(f"Finished ingestion: {total_inserted} inserted, {total_updated} updated.")
+
 
 # --------------------------
 # Entry Point
