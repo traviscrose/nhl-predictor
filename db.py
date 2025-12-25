@@ -1,12 +1,17 @@
-import os
 from sqlalchemy import create_engine
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DB_USER = "nhl_user"
+DB_PASSWORD = "nhl_pass"
+DB_HOST = "NUC-nhl-predictor-db"
+DB_PORT = "5432"
+DB_NAME = "nhl_predictor"
 
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+DATABASE_URL = (
+    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
+    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
 
 engine = create_engine(
     DATABASE_URL,
@@ -14,8 +19,11 @@ engine = create_engine(
 )
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return psycopg2.connect(
-        os.environ["DATABASE_URL"],
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
         cursor_factory=RealDictCursor
     )
