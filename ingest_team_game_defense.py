@@ -96,13 +96,13 @@ def ingest_all_games():
     Ingest defense for all games in the `games` table.
     """
     # Pull all games
-    query = "SELECT id, season FROM games ORDER BY game_date"
+    query = "SELECT nhl_game_id, season FROM games ORDER BY game_date"
     games_df = pd.read_sql(query, engine)
 
     print(f"Found {len(games_df)} games to ingest")
 
     for idx, row in games_df.iterrows():
-        game_id = row["id"]
+        game_id = row["nhl_game_id"]
         season = row["season"]
         try:
             ingest_defense(game_id, season)
