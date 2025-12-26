@@ -142,7 +142,7 @@ def ingest_all_games():
     """
     with engine.connect() as conn:
         games = conn.execute(text("""
-            SELECT nhl_game_id, season
+            SELECT g.nhl_game_id, g.season
             FROM games g
             LEFT JOIN team_game_defense d
             ON g.nhl_game_id = d.game_id
