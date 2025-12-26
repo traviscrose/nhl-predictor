@@ -17,7 +17,6 @@ FEATURES = [
     "opp_points_pg",
 
     # interactions
-    "offense_vs_opp",
     "shot_pressure",
     "home_offense",
 
@@ -114,11 +113,6 @@ df["opp_points_pg"] = df["opp_points_last5"] / 5
 # Interaction features
 # --------------------------
 
-# Offense vs opponent recent form
-df["offense_vs_opp"] = (
-    df["points_pg"] / (df["opp_points_pg"] + 1e-3)
-)
-
 # Pace / chaos proxy
 df["shot_pressure"] = (
     df["shots_pg"] * df["opp_shots_pg"]
@@ -136,19 +130,48 @@ df["home_offense"] = (
 season_goal_env = df.groupby("season")["goals"].mean()
 df["season_goal_env"] = df["season"].map(season_goal_env)
 
+season_goal_env = df.groupby("season")["goals"].mean()
+df["season_goal_env"] = df["season"].map(season_goal_env)
+
 df["adj_points_pg"] = (
-    df["points_pg"] / df["season_goal_env"]
+    df["points_pg"] - df["season_goal_env"]
 )
+
 
 missing_engineered = [c for c in FEATURES if c not in df.columns]
 if missing_engineered:
     raise RuntimeError(
         f"Missing engineered features: {missing_engineered}"
     )
+    
+FEATURE_CLIP = {
+    "shots_pg": (10, 45),
+    "hits_pg": (5, 40),
+    "points_pg": (0.5, 6),
+    "opp_shots_pg": (10, 45),
+    "opp_hits_pg": (5, 40),
+    "opp_points_pg": (0.5, 6),
+    "shot_pressure": (100, 2000),
+    "home_offense": (0, 6),
+    "adj_points_pg": (-3, 3),
+}
+
+for col, (lo, hi) in FEATURE_CLIP.items():
+    df[col] = df[col].clip(lo, hi)
+
 
 # -------------------------------------------------
 # 4. Rolling season backtest
 # -------------------------------------------------
+
+X = df[FEATURES]
+
+if not np.isfinite(X.to_numpy()).all():
+    raise RuntimeError("Non-finite values detected in features")
+
+print("Feature std dev:")
+print(X.std().round(3))
+
 
 seasons = sorted(df["season"].unique())
 results = []
@@ -177,7 +200,7 @@ for i in range(1, len(seasons)):
     print(f"Baseline MAE: {baseline_mae:.3f}")
 
 
-    model = PoissonRegressor(alpha=0.1, max_iter=3000)
+    model = PoissonRegressor(alpha=0.05, max_iter=5000)
     model.fit(X_train, y_train)
 
     test = test.copy()
