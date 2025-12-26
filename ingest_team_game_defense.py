@@ -1,51 +1,46 @@
 import os
 import requests
 import logging
-from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-# -----------------------------
-# Load environment variables
-# -----------------------------
+# ------------------------
+# Setup
+# ------------------------
 load_dotenv()
-DB_URI = os.getenv("DB_URI")
-if not DB_URI:
-    raise ValueError("DB_URI must be set in the .env file")
+DB_URI = os.getenv("DB_URI")  # e.g., postgresql+psycopg2://user:pass@localhost/nhl_database
 
-engine = create_engine(DB_URI, future=True)
+engine = create_engine(DB_URI)
+Session = sessionmaker(bind=engine)
 
-# -----------------------------
-# Logging
-# -----------------------------
+BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# -----------------------------
-# NHL API URLs
-# -----------------------------
-SCHEDULE_URL = "https://api-web.nhle.com/v1/schedule/{date}"
-BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
-
-# -----------------------------
-# Helper functions
-# -----------------------------
-def fetch_schedule(date_str):
-    url = SCHEDULE_URL.format(date=date_str)
-    r = requests.get(url)
-    r.raise_for_status()
-    return r.json()
+# ------------------------
+# Helper Functions
+# ------------------------
 
 def fetch_boxscore(game_id):
     url = BOXSCORE_URL.format(game_id=game_id)
-    r = requests.get(url)
-    r.raise_for_status()
-    return r.json()
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as e:
+        logging.error(f"Failed to fetch boxscore for game {game_id}: {e}")
+        return None
 
-def upsert_defense_stats(conn, game_id, season, team_id, defense_players):
-    sql = text("""
+def insert_defense_stats(session, game_id, season, team_id, defense_players):
+    if not defense_players:
+        logging.info(f"No defense players found for game {game_id}, team {team_id}")
+        return
+
+    insert_sql = text("""
         INSERT INTO team_game_defense (
             game_id, season, team_id, player_id, name, position,
             goals, assists, points, plus_minus, pim,
@@ -70,12 +65,12 @@ def upsert_defense_stats(conn, game_id, season, team_id, defense_players):
     """)
 
     for player in defense_players:
-        conn.execute(sql, {
+        session.execute(insert_sql, {
             "game_id": game_id,
             "season": season,
             "team_id": team_id,
             "player_id": player.get("playerId"),
-            "name": player.get("name", {}).get("default"),
+            "name": player["name"]["default"],
             "position": player.get("position"),
             "goals": player.get("goals", 0),
             "assists": player.get("assists", 0),
@@ -87,71 +82,64 @@ def upsert_defense_stats(conn, game_id, season, team_id, defense_players):
             "shifts": player.get("shifts", 0),
             "giveaways": player.get("giveaways", 0),
             "takeaways": player.get("takeaways", 0),
-            "toi": player.get("toi")
+            "toi": player.get("toi", "0:00")
         })
 
-# -----------------------------
-# Main ingestion loop
-# -----------------------------
-def ingest_all_games(start_date="2025-10-01", end_date=None):
-    if end_date is None:
-        end_date = datetime.now().strftime("%Y-%m-%d")
+# ------------------------
+# Main Ingestion Loop
+# ------------------------
 
-    current_date = datetime.strptime(start_date, "%Y-%m-%d")
-    end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
+def ingest_all_games():
+    session = Session()
+    try:
+        # Only select games that don't already have defense stats
+        games = session.execute(text("""
+            SELECT g.nhl_game_id, g.season, g.home_team_id, g.away_team_id
+            FROM games g
+            LEFT JOIN team_game_defense d
+              ON g.nhl_game_id = d.game_id
+            WHERE d.game_id IS NULL
+            ORDER BY g.nhl_game_id
+        """)).all()
 
-    games_to_ingest = []
+        logging.info(f"Found {len(games)} games to ingest")
 
-    # Collect all games between start and end date
-    while current_date <= end_date_dt:
-        date_str = current_date.strftime("%Y-%m-%d")
-        try:
-            schedule_json = fetch_schedule(date_str)
-            daily_games = schedule_json.get("dates", [])
-            for day in daily_games:
-                for game in day.get("games", []):
-                    games_to_ingest.append({
-                        "game_id": game.get("gamePk"),
-                        "season": game.get("season")
-                    })
-        except requests.HTTPError as e:
-            logging.warning(f"Failed to fetch schedule for {date_str}: {e}")
-        current_date += timedelta(days=1)
+        for game_row in games:
+            game_id = game_row[0]
+            season = game_row[1]
+            home_team_id = game_row[2]
+            away_team_id = game_row[3]
 
-    logging.info(f"Found {len(games_to_ingest)} games to ingest")
-
-    # Process each game
-    for game in games_to_ingest:
-        game_id = game["game_id"]
-        season = game["season"]
-
-        try:
             boxscore = fetch_boxscore(game_id)
-        except requests.HTTPError as e:
-            logging.warning(f"Failed to fetch boxscore for game {game_id}: {e}")
-            continue
+            if not boxscore:
+                continue
 
-        player_stats = boxscore.get("playerByGameStats", {})
+            player_stats = boxscore.get("playerByGameStats", {})
+            inserted_any = False
 
-        teams = [
-            ("awayTeam", boxscore.get("awayTeam", {}).get("id")),
-            ("homeTeam", boxscore.get("homeTeam", {}).get("id"))
-        ]
+            # Away defense
+            away_defense = player_stats.get("awayTeam", {}).get("defense", [])
+            if away_defense:
+                insert_defense_stats(session, game_id, season, away_team_id, away_defense)
+                inserted_any = True
 
-        with engine.begin() as conn:
-            any_defense_found = False
-            for side, team_id in teams:
-                if not team_id:
-                    continue
-                defense_players = player_stats.get(side, {}).get("defense", [])
-                if not defense_players:
-                    logging.info(f"No defense players found for game {game_id}, team {team_id}")
-                    continue
-                any_defense_found = True
-                upsert_defense_stats(conn, game_id, season, team_id, defense_players)
+            # Home defense
+            home_defense = player_stats.get("homeTeam", {}).get("defense", [])
+            if home_defense:
+                insert_defense_stats(session, game_id, season, home_team_id, home_defense)
+                inserted_any = True
 
-            if not any_defense_found:
+            if inserted_any:
+                session.commit()
+                logging.info(f"Inserted/Updated defense stats for game {game_id}")
+            else:
                 logging.info(f"No defense stats to insert for game {game_id}")
+
+    except Exception as e:
+        logging.error(f"Error in ingest_all_games: {e}")
+        session.rollback()
+    finally:
+        session.close()
 
 if __name__ == "__main__":
     ingest_all_games()
