@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import mean_absolute_error
 from db import engine
@@ -126,9 +127,6 @@ df["home_offense"] = (
 # --------------------------
 # Season scoring environment normalization
 # --------------------------
-
-season_goal_env = df.groupby("season")["goals"].mean()
-df["season_goal_env"] = df["season"].map(season_goal_env)
 
 season_goal_env = df.groupby("season")["goals"].mean()
 df["season_goal_env"] = df["season"].map(season_goal_env)
