@@ -9,7 +9,7 @@ from persist_team_game_features import persist_team_game_features
 games = pd.read_sql("""
     SELECT
         g.id AS game_id,
-        g.date,
+        g.game_date,
         g.home_team_id,
         g.away_team_id,
         ht.abbreviation AS home_abbrev,
