@@ -23,9 +23,10 @@ FEATURES = [
 TARGET = "goals"
 
 # -------------------------------------------------
-# 1. Load data
+# 1. Load raw data
 # -------------------------------------------------
-query = """
+# Load offensive stats from team_vs_opponent
+off_query = """
 SELECT
     t.game_id,
     t.team_id,
@@ -35,16 +36,9 @@ SELECT
     t.opp_abbrev,
     t.goals,
     t.goals_against,
-    t.shots_last5,
-    t.hits_last5,
-    t.points_last5,
-    t.opp_shots_last5,
-    t.opp_hits_last5,
-    t.opp_points_last5,
-    COALESCE(t.def_blocked_shots_last5, 0) AS def_blocked_shots_last5,
-    COALESCE(t.def_plus_minus_last5, 0) AS def_plus_minus_last5,
-    COALESCE(t.opp_def_blocked_shots_last5, 0) AS opp_def_blocked_shots_last5,
-    COALESCE(t.opp_def_plus_minus_last5, 0) AS opp_def_plus_minus_last5,
+    t.shots AS shots_raw,
+    t.hits AS hits_raw,
+    t.points AS points_raw,
     g.game_date AS date,
     g.season
 FROM team_vs_opponent t
@@ -53,40 +47,72 @@ JOIN games g
 ORDER BY g.game_date;
 """
 
-df = pd.read_sql(query, engine)
-df["date"] = pd.to_datetime(df["date"])
+df_off = pd.read_sql(off_query, engine)
+df_off["date"] = pd.to_datetime(df_off["date"])
+
+# Load defense stats from team_game_defense
+def_query = """
+SELECT
+    game_id,
+    team_id,
+    SUM(blocked_shots) AS blocked_shots,
+    SUM(plus_minus) AS plus_minus
+FROM team_game_defense
+GROUP BY game_id, team_id
+ORDER BY game_id;
+"""
+
+df_def = pd.read_sql(def_query, engine)
 
 # -------------------------------------------------
-# 2. Sanity checks
+# 2. Merge and compute last-5 rolling stats
 # -------------------------------------------------
-required_cols = FEATURES + [TARGET, "season", "date"]
-missing = [c for c in required_cols if c not in df.columns]
-if missing:
-    raise RuntimeError(f"Missing required columns: {missing}")
+# Merge offense and defense
+df = pd.merge(df_off, df_def, how="left", on=["game_id", "team_id"])
 
-if df.empty:
-    raise RuntimeError("Loaded dataframe is empty")
+# Sort for rolling calculations
+df = df.sort_values(["team_id", "date"]).reset_index(drop=True)
 
-if df["season"].isna().any():
-    raise RuntimeError("Null season values detected")
+# Compute rolling last-5 features per team
+roll_cols = ["shots_raw", "hits_raw", "points_raw", "blocked_shots", "plus_minus"]
+for col in roll_cols:
+    df[f"{col}_last5"] = df.groupby("team_id")[col].shift().rolling(5, min_periods=1).mean()
 
-print("Loaded rows:", len(df))
-print("Seasons:", sorted(df["season"].unique()))
-print("Rows per season:")
-print(df.groupby("season").size())
-
-# -------------------------------------------------
-# 3. Preprocessing
-# -------------------------------------------------
+# Compute opponent rolling stats
+df = pd.merge(
+    df,
+    df.groupby(["game_id", "team_id"])[["blocked_shots_last5", "plus_minus_last5"]].sum().reset_index(),
+    how="left",
+    left_on=["game_id", "opp_team_id"],
+    right_on=["game_id", "team_id"],
+    suffixes=("", "_opp")
+)
 df["home_away"] = df["home_away"].map({"home": 1, "away": 0})
 
-# Fill NaNs in numeric columns and features
-numeric_cols = df.select_dtypes(include="number").columns
-df[numeric_cols] = df[numeric_cols].fillna(0)
-df[FEATURES] = df[FEATURES].fillna(0)
+# Fill NaNs with 0 for new rolling stats
+df[[
+    "shots_raw_last5", "hits_raw_last5", "points_raw_last5",
+    "blocked_shots_last5", "plus_minus_last5",
+    "blocked_shots_last5_opp", "plus_minus_last5_opp"
+]] = df[[
+    "shots_raw_last5", "hits_raw_last5", "points_raw_last5",
+    "blocked_shots_last5", "plus_minus_last5",
+    "blocked_shots_last5_opp", "plus_minus_last5_opp"
+]].fillna(0)
+
+# Rename for model FEATURES
+df = df.rename(columns={
+    "shots_raw_last5": "shots_last5",
+    "hits_raw_last5": "hits_last5",
+    "points_raw_last5": "points_last5",
+    "blocked_shots_last5": "def_blocked_shots_last5",
+    "plus_minus_last5": "def_plus_minus_last5",
+    "blocked_shots_last5_opp": "opp_def_blocked_shots_last5",
+    "plus_minus_last5_opp": "opp_def_plus_minus_last5",
+})
 
 # -------------------------------------------------
-# 4. Rolling season backtest
+# 3. Rolling season backtest
 # -------------------------------------------------
 seasons = sorted(df["season"].unique())
 results = []
@@ -129,7 +155,7 @@ for i in range(1, len(seasons)):
     )
 
 # -------------------------------------------------
-# 5. Results
+# 4. Results
 # -------------------------------------------------
 if not results:
     raise RuntimeError("No backtest results generated")
