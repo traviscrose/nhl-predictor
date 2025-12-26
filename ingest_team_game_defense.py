@@ -98,3 +98,45 @@ def ingest_defense(game_id: int, season: int):
             plus_minus = EXCLUDED.plus_minus,
             pim = EXCLUDED.pim,
             hits = EXCLUDED.hits,
+            blocked_shots = EXCLUDED.blocked_shots,
+            shifts = EXCLUDED.shifts,
+            giveaways = EXCLUDED.giveaways,
+            takeaways = EXCLUDED.takeaways,
+            toi = EXCLUDED.toi
+    """)
+
+    with engine.begin() as conn:
+        for row in rows_to_insert:
+            conn.execute(insert_sql, **row)
+    logging.info(f"Inserted/updated defense stats for game {game_id}")
+
+
+# -----------------------------
+# Main ingestion loop
+# -----------------------------
+def ingest_all_games():
+    query = text("""
+        SELECT g.nhl_game_id, g.season
+        FROM games g
+        ORDER BY g.season, g.id
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        games = result.mappings().all()  # return dict-like rows
+
+    logging.info(f"Found {len(games)} games to ingest")
+
+    for game in games:
+        game_id = game["nhl_game_id"]
+        season = game["season"]
+        try:
+            ingest_defense(game_id, season)
+        except Exception as e:
+            logging.warning(f"Failed to ingest game {game_id}: {e}")
+
+
+# -----------------------------
+# Run
+# -----------------------------
+if __name__ == "__main__":
+    ingest_all_games()
