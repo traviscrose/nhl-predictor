@@ -39,7 +39,7 @@ SELECT
     t.opp_shots_last5,
     t.opp_hits_last5,
     t.opp_points_last5,
-    g.game_date,
+    g.game_date AS date,
     g.season_id
 FROM team_vs_opponent t
 JOIN games g
