@@ -44,7 +44,7 @@ SELECT
 FROM team_vs_opponent t
 JOIN games g
   ON t.game_id = g.id
-ORDER BY g.date;
+ORDER BY g.game_date;
 """
 
 df = pd.read_sql(query, engine)
