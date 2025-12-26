@@ -194,7 +194,7 @@ def ingest_schedule(start_date, end_date):
                 print(
                     f"Inserted new game {nhl_game_id}: "
                     f"{game['homeTeam']['abbrev']} vs {game['awayTeam']['abbrev']} "
-                    f"({status}) season={season_code}"
+                    f"({status}) season={season}"
                 )
 
         next_date = schedule.get("nextStartDate")
