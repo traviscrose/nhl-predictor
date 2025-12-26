@@ -1,6 +1,6 @@
 import pandas as pd
 import requests
-from db import get_conn
+from db import get_conn, engine  # Assuming `engine` is your SQLAlchemy engine
 
 # -------------------------------
 # Config
@@ -85,3 +85,31 @@ def ingest_defense(game_id, season):
     finally:
         cur.close()
         conn.close()
+
+
+# -------------------------------
+# Main ingestion loop
+# -------------------------------
+
+def ingest_all_games():
+    """
+    Ingest defense for all games in the `games` table.
+    """
+    # Pull all games
+    query = "SELECT id, season FROM games ORDER BY game_date"
+    games_df = pd.read_sql(query, engine)
+
+    print(f"Found {len(games_df)} games to ingest")
+
+    for idx, row in games_df.iterrows():
+        game_id = row["id"]
+        season = row["season"]
+        try:
+            ingest_defense(game_id, season)
+            print(f"Ingested defense for game {game_id} ({season})")
+        except Exception as e:
+            print(f"Failed to ingest game {game_id}: {e}")
+
+
+if __name__ == "__main__":
+    ingest_all_games()
