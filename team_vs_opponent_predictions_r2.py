@@ -41,21 +41,15 @@ SELECT
     t.opp_shots_last5,
     t.opp_hits_last5,
     t.opp_points_last5,
-    -- defense stats for team
-    d.blocked_shots_last5   AS def_blocked_shots_last5,
-    d.plus_minus_last5      AS def_plus_minus_last5,
-    -- defense stats for opponent
-    od.blocked_shots_last5  AS opp_def_blocked_shots_last5,
-    od.plus_minus_last5     AS opp_def_plus_minus_last5,
+    COALESCE(t.def_blocked_shots_last5, 0) AS def_blocked_shots_last5,
+    COALESCE(t.def_plus_minus_last5, 0) AS def_plus_minus_last5,
+    COALESCE(t.opp_def_blocked_shots_last5, 0) AS opp_def_blocked_shots_last5,
+    COALESCE(t.opp_def_plus_minus_last5, 0) AS opp_def_plus_minus_last5,
     g.game_date AS date,
     g.season
 FROM team_vs_opponent t
 JOIN games g
   ON t.game_id = g.id
-LEFT JOIN team_defense_last5 d
-  ON t.game_id = d.game_id AND t.team_id = d.team_id
-LEFT JOIN team_defense_last5 od
-  ON t.game_id = od.game_id AND t.opp_team_id = od.team_id
 ORDER BY g.game_date;
 """
 
@@ -86,8 +80,10 @@ print(df.groupby("season").size())
 # -------------------------------------------------
 df["home_away"] = df["home_away"].map({"home": 1, "away": 0})
 
+# Fill NaNs in numeric columns and features
 numeric_cols = df.select_dtypes(include="number").columns
 df[numeric_cols] = df[numeric_cols].fillna(0)
+df[FEATURES] = df[FEATURES].fillna(0)
 
 # -------------------------------------------------
 # 4. Rolling season backtest
