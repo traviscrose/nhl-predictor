@@ -94,6 +94,8 @@ def ingest_schedule(start_date, end_date):
                 status = map_game_state(raw_state)
                 if home_score is not None and away_score is not None:
                     status = "final"
+                    
+                season = game.get("season")
 
                 game_date = datetime.strptime(
                     game["startTimeUTC"], "%Y-%m-%dT%H:%M:%SZ"
