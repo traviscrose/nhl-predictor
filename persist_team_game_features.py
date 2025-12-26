@@ -2,22 +2,61 @@ from sqlalchemy import text
 from db import engine
 
 def persist_team_game_features(df):
-    # Fill NaNs in numeric columns
+    df = df.copy()  # avoid SettingWithCopyWarning
+
     numeric_cols = df.select_dtypes(include="number").columns
     df[numeric_cols] = df[numeric_cols].fillna(0)
 
     upsert_sql = """
     INSERT INTO public.team_vs_opponent (
-        game_id, team_id, team_abbrev, home_away, opp_abbrev,
-        goals, goals_against, shots, hits, points,
-        opp_goals, opp_shots, opp_hits, opp_points,
-        goals_last5, goals_against_last5, shots_last5, hits_last5, points_last5, opp_team_id
+        game_id,
+        team_id,
+        team_abbrev,
+        home_away,
+        opp_team_id,
+        opp_abbrev,
+
+        goals,
+        goals_against,
+        shots,
+        hits,
+        points,
+
+        opp_goals,
+        opp_shots,
+        opp_hits,
+        opp_points,
+
+        goals_last5,
+        goals_against_last5,
+        shots_last5,
+        hits_last5,
+        points_last5
     )
     VALUES (
-        :game_id, :team_id, :team_abbrev, :home_away, :opp_abbrev,
-        :goals, :goals_against, :shots, :hits, :points,
-        :opp_goals, :opp_shots, :opp_hits, :opp_points,
-        :goals_last5, :goals_against_last5, :shots_last5, :hits_last5, :points_last5, :opp_team_id
+        :game_id,
+        :team_id,
+        :team_abbrev,
+        :home_away,
+        :opp_team_id,
+        :opp_abbrev,
+
+        :goals,
+        :goals_against,
+        :shots,
+        :hits,
+        :points,
+
+        :opp_goals,
+        :opp_shots,
+        :opp_hits,
+        :opp_points,
+
+        :goals_last5,
+        :goals_against_last5,
+        :shots_last5,
+        :hits_last5,
+        :points_last5
     )
     ON CONFLICT (game_id, team_id) DO UPDATE SET
         goals = EXCLUDED.goals,
@@ -38,7 +77,6 @@ def persist_team_game_features(df):
     """
 
     with engine.begin() as conn:
-        for _, row in df.iterrows():
-            conn.execute(text(upsert_sql), row.to_dict())  # pass the dict as a single param
+        conn.execute(text(upsert_sql), df.to_dict(orient="records"))
 
     print(f"Persisted {len(df)} rows into public.team_vs_opponent")
