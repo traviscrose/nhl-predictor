@@ -62,7 +62,18 @@ df["date"] = pd.to_datetime(df["date"])
 # 2. Sanity checks
 # -------------------------------------------------
 
-required_cols = FEATURES + [TARGET, "season", "date"]
+RAW_FEATURES = [
+    "shots_last5",
+    "hits_last5",
+    "points_last5",
+    "opp_shots_last5",
+    "opp_hits_last5",
+    "opp_points_last5",
+    "home_away",
+]
+
+required_cols = RAW_FEATURES + [TARGET, "season", "date"]
+
 missing = [c for c in required_cols if c not in df.columns]
 if missing:
     raise RuntimeError(f"Missing required columns: {missing}")
@@ -117,6 +128,13 @@ df["shot_pressure"] = (
 df["home_offense"] = (
     df["home_away"] * df["points_pg"]
 )
+
+missing_engineered = [c for c in FEATURES if c not in df.columns]
+if missing_engineered:
+    raise RuntimeError(
+        f"Missing engineered features: {missing_engineered}"
+    )
+
 
 # --------------------------
 # Season scoring environment normalization
