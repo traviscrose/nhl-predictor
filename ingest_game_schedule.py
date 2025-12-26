@@ -115,10 +115,10 @@ def ingest_schedule(start_date, end_date):
                 away_team_id = team_cache[game["awayTeam"]["abbrev"]]
 
                 # --- Upsert Season ---
-                season_code = game.get("season")
-                if season_code not in season_cache:
-                    season_cache[season_code] = upsert_season(cur, season_code)
-                season = season_cache[season_code]
+                #season_code = game.get("season")
+                #if season_code not in season_cache:
+                #    season_cache[season_code] = upsert_season(cur, season_code)
+                #season = season_cache[season_code]
 
                 # --- Smart Upsert Game ---
                 cur.execute("""
