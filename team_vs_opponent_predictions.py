@@ -1,16 +1,11 @@
 import pandas as pd
-from sqlalchemy import create_engine
 from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import mean_absolute_error
-import os
-from sqlalchemy import create_engine
+from db import engine
 
 # -------------------------------------------------
 # Config
 # -------------------------------------------------
-
-DB_URL = os.environ["DATABASE_URL"]
-engine = create_engine(DB_URL)
 
 FEATURES = [
     "shots_last5",
@@ -22,13 +17,11 @@ FEATURES = [
     "home_away",
 ]
 
-TARGET = "goals_for"
+TARGET = "goals"
 
 # -------------------------------------------------
-# 1. Load data (season comes from games table)
+# 1. Load data
 # -------------------------------------------------
-
-engine = create_engine(DB_URL)
 
 query = """
 SELECT
@@ -58,7 +51,7 @@ df = pd.read_sql(query, engine)
 df["date"] = pd.to_datetime(df["date"])
 
 # -------------------------------------------------
-# 2. Sanity checks (fail fast)
+# 2. Sanity checks
 # -------------------------------------------------
 
 required_cols = FEATURES + [TARGET, "season", "date"]
@@ -81,10 +74,8 @@ print(df.groupby("season").size())
 # 3. Preprocessing
 # -------------------------------------------------
 
-# Encode home/away
 df["home_away"] = df["home_away"].map({"home": 1, "away": 0})
 
-# Fill remaining numeric nulls defensively
 numeric_cols = df.select_dtypes(include="number").columns
 df[numeric_cols] = df[numeric_cols].fillna(0)
 
@@ -133,7 +124,7 @@ for i in range(1, len(seasons)):
     )
 
 # -------------------------------------------------
-# 5. Finalize results
+# 5. Results
 # -------------------------------------------------
 
 if not results:
@@ -148,15 +139,5 @@ print(
     .mean()
     .round(3)
 )
-
-# -------------------------------------------------
-# 6. (Optional) Persist predictions
-# -------------------------------------------------
-# all_results.to_sql(
-#     "team_vs_opponent_backtest_results",
-#     engine,
-#     if_exists="replace",
-#     index=False,
-# )
 
 print("\nDone.")
