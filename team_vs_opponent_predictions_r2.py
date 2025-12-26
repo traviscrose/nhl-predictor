@@ -35,38 +35,27 @@ SELECT
     t.opp_abbrev,
     t.goals,
     t.goals_against,
-
-    -- offense (team)
     t.shots_last5,
     t.hits_last5,
     t.points_last5,
-
-    -- offense (opponent)
     t.opp_shots_last5,
     t.opp_hits_last5,
     t.opp_points_last5,
-
-    -- defense (team)
-    d.def_blocked_shots_last5,
-    d.def_plus_minus_last5,
-
-    -- defense (opponent)
-    od.def_blocked_shots_last5 AS opp_def_blocked_shots_last5,
-    od.def_plus_minus_last5    AS opp_def_plus_minus_last5,
-
+    -- defense stats for team
+    d.blocked_shots_last5   AS def_blocked_shots_last5,
+    d.plus_minus_last5      AS def_plus_minus_last5,
+    -- defense stats for opponent
+    od.blocked_shots_last5  AS opp_def_blocked_shots_last5,
+    od.plus_minus_last5     AS opp_def_plus_minus_last5,
     g.game_date AS date,
     g.season
 FROM team_vs_opponent t
-
 JOIN games g
   ON t.game_id = g.id
-
 LEFT JOIN team_defense_last5 d
-  ON d.team_id = t.team_id
-
+  ON t.game_id = d.game_id AND t.team_id = d.team_id
 LEFT JOIN team_defense_last5 od
-  ON od.team_id = t.opp_team_id
-
+  ON t.game_id = od.game_id AND t.opp_team_id = od.team_id
 ORDER BY g.game_date;
 """
 
