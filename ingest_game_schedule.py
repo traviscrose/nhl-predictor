@@ -118,7 +118,7 @@ def ingest_schedule(start_date, end_date):
                 season_code = game.get("season")
                 if season_code not in season_cache:
                     season_cache[season_code] = upsert_season(cur, season_code)
-                season_id = season_cache[season_code]
+                season = season_cache[season_code]
 
                 # --- Smart Upsert Game ---
                 cur.execute("""
@@ -142,7 +142,7 @@ def ingest_schedule(start_date, end_date):
                                 status = %s,
                                 home_score = CASE WHEN %s = 'final' THEN %s ELSE home_score END,
                                 away_score = CASE WHEN %s = 'final' THEN %s ELSE away_score END,
-                                season_id = %s,
+                                season = %s,
                                 venue = %s,
                                 game_type = %s
                             WHERE nhl_game_id = %s
@@ -150,7 +150,7 @@ def ingest_schedule(start_date, end_date):
                             status,
                             status, home_score,
                             status, away_score,
-                            season_id,
+                            season,
                             venue,
                             game_type,
                             nhl_game_id
@@ -165,7 +165,7 @@ def ingest_schedule(start_date, end_date):
                 cur.execute("""
                     INSERT INTO games (
                         nhl_game_id,
-                        season_id,
+                        season,
                         game_date,
                         home_team_id,
                         away_team_id,
@@ -178,7 +178,7 @@ def ingest_schedule(start_date, end_date):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     nhl_game_id,
-                    season_id,
+                    season,
                     game_date,
                     home_team_id,
                     away_team_id,
