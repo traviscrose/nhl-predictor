@@ -16,7 +16,7 @@ BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
 def ingest_defense(nhl_game_id, season):
     """Ingest defense stats for a single game."""
     try:
-        r = requests.get(BOXSCORE_URL.format(game_id=nhl_game_id), timeout=10)
+        r = requests.get(BOXSCORE_URL.format(nhl_game_id), timeout=10)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
