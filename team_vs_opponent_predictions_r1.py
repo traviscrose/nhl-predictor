@@ -129,13 +129,6 @@ df["home_offense"] = (
     df["home_away"] * df["points_pg"]
 )
 
-missing_engineered = [c for c in FEATURES if c not in df.columns]
-if missing_engineered:
-    raise RuntimeError(
-        f"Missing engineered features: {missing_engineered}"
-    )
-
-
 # --------------------------
 # Season scoring environment normalization
 # --------------------------
@@ -147,6 +140,11 @@ df["adj_points_pg"] = (
     df["points_pg"] / df["season_goal_env"]
 )
 
+missing_engineered = [c for c in FEATURES if c not in df.columns]
+if missing_engineered:
+    raise RuntimeError(
+        f"Missing engineered features: {missing_engineered}"
+    )
 
 # -------------------------------------------------
 # 4. Rolling season backtest
