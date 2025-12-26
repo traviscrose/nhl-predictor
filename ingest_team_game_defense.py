@@ -1,46 +1,87 @@
 import os
-import time
 import requests
 import logging
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
-# ----------------------------
+# -----------------------------
 # Load environment variables
-# ----------------------------
+# -----------------------------
 load_dotenv()
 DB_URI = os.getenv("DB_URI")
 if not DB_URI:
-    raise RuntimeError("DB_URI not found in .env")
+    raise RuntimeError("DB_URI not set in .env")
 
 engine = create_engine(DB_URI)
 
-# ----------------------------
-# Logging configuration
-# ----------------------------
-LOG_FILE = "ingest_defense.log"
+# -----------------------------
+# Logging
+# -----------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
 )
-logger = logging.getLogger(__name__)
 
-# ----------------------------
+# -----------------------------
 # Config
-# ----------------------------
+# -----------------------------
 BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
-MAX_RETRIES = 3
-RETRY_DELAY = 2  # seconds
 
-# ----------------------------
+# -----------------------------
 # Helper Functions
-# ----------------------------
-def upsert_defense(cur, game_id, season, team_id, player):
-    stmt = text("""
+# -----------------------------
+def ingest_defense(game_id: int, season: int):
+    """
+    Fetch defense stats for a single game and insert into DB.
+    """
+    try:
+        r = requests.get(BOXSCORE_URL.format(game_id=game_id), timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logging.warning(f"Failed to fetch game {game_id}: {e}")
+        return
+
+    rows_to_insert = []
+
+    for team_key in ["awayTeam", "homeTeam"]:
+        team_data = data.get(team_key)
+        if not team_data:
+            continue
+        team_id = team_data["id"]
+
+        defense_players = team_data.get("defense", [])
+        if not defense_players:
+            logging.info(f"No defense players found for game {game_id}, team {team_id}")
+            continue
+
+        for p in defense_players:
+            row = {
+                "game_id": game_id,
+                "season": season,
+                "team_id": team_id,
+                "player_id": p["playerId"],
+                "name": p["name"]["default"],
+                "position": p["position"],
+                "goals": p.get("goals", 0),
+                "assists": p.get("assists", 0),
+                "points": p.get("points", 0),
+                "plus_minus": p.get("plusMinus", 0),
+                "pim": p.get("pim", 0),
+                "hits": p.get("hits", 0),
+                "blocked_shots": p.get("blockedShots", 0),
+                "shifts": p.get("shifts", 0),
+                "giveaways": p.get("giveaways", 0),
+                "takeaways": p.get("takeaways", 0),
+                "toi": p.get("toi", None),
+            }
+            rows_to_insert.append(row)
+
+    if not rows_to_insert:
+        logging.info(f"No defense stats to insert for game {game_id}")
+        return
+
+    insert_sql = text("""
         INSERT INTO team_game_defense (
             game_id, season, team_id, player_id, name, position,
             goals, assists, points, plus_minus, pim,
@@ -57,108 +98,3 @@ def upsert_defense(cur, game_id, season, team_id, player):
             plus_minus = EXCLUDED.plus_minus,
             pim = EXCLUDED.pim,
             hits = EXCLUDED.hits,
-            blocked_shots = EXCLUDED.blocked_shots,
-            shifts = EXCLUDED.shifts,
-            giveaways = EXCLUDED.giveaways,
-            takeaways = EXCLUDED.takeaways,
-            toi = EXCLUDED.toi
-    """)
-    cur.execute(stmt, {
-        "game_id": game_id,
-        "season": season,
-        "team_id": team_id,
-        "player_id": player.get("playerId"),
-        "name": player.get("name", {}).get("default"),
-        "position": player.get("position"),
-        "goals": player.get("goals", 0),
-        "assists": player.get("assists", 0),
-        "points": player.get("points", 0),
-        "plus_minus": player.get("plusMinus", 0),
-        "pim": player.get("pim", 0),
-        "hits": player.get("hits", 0),
-        "blocked_shots": player.get("blockedShots", 0),
-        "shifts": player.get("shifts", 0),
-        "giveaways": player.get("giveaways", 0),
-        "takeaways": player.get("takeaways", 0),
-        "toi": player.get("toi"),
-    })
-
-def fetch_game_json(game_id):
-    """
-    Fetch game JSON from NHL API with retries.
-    """
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            r = requests.get(BOXSCORE_URL.format(game_id=game_id))
-            r.raise_for_status()
-            return r.json()
-        except requests.RequestException as e:
-            logger.warning(f"[Attempt {attempt}] Failed to fetch game {game_id}: {e}")
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_DELAY)
-            else:
-                logger.error(f"Skipping game {game_id} after {MAX_RETRIES} failed attempts.")
-                return None
-
-def ingest_defense(game_id, season):
-    """
-    Fetch a game boxscore and ingest defense stats for both teams.
-    """
-    data = fetch_game_json(game_id)
-    if not data or "playerByGameStats" not in data:
-        logger.warning(f"No player stats found for game {game_id}")
-        return
-
-    defense_players = []
-
-    # Away team
-    away_def = data.get("playerByGameStats", {}).get("awayTeam", {}).get("defense", [])
-    away_team_id = data.get("awayTeam", {}).get("id")
-    for player in away_def:
-        defense_players.append((player, away_team_id))
-
-    # Home team
-    home_def = data.get("playerByGameStats", {}).get("homeTeam", {}).get("defense", [])
-    home_team_id = data.get("homeTeam", {}).get("id")
-    for player in home_def:
-        defense_players.append((player, home_team_id))
-
-    if not defense_players:
-        logger.info(f"No defense stats to insert for game {game_id}")
-        return
-
-    try:
-        with engine.begin() as conn:
-            for player, team_id in defense_players:
-                upsert_defense(conn, game_id, season, team_id, player)
-        logger.info(f"Successfully ingested defense stats for game {game_id}")
-    except Exception as e:
-        logger.error(f"Failed to ingest defense stats for game {game_id}: {e}")
-
-def ingest_all_games():
-    """
-    Loop through all games in the games table and ingest defense stats.
-    Skips games that already have defense stats.
-    """
-    with engine.connect() as conn:
-        games = conn.execute(text("""
-            SELECT g.nhl_game_id, g.season
-            FROM games g
-            LEFT JOIN team_game_defense d
-            ON g.nhl_game_id = d.game_id
-            GROUP BY g.nhl_game_id, g.season
-            HAVING COUNT(d.game_id) = 0
-            ORDER BY g.nhl_game_id
-        """)).fetchall()
-
-    logger.info(f"Found {len(games)} games to ingest")
-
-    for idx, game in enumerate(games, start=1):
-        game_id = game["nhl_game_id"]
-        season = game["season"]
-        logger.info(f"[{idx}/{len(games)}] Ingesting game {game_id} (season {season})")
-        ingest_defense(game_id, season)
-
-if __name__ == "__main__":
-    ingest_all_games()
-    logger.info("Done.")
