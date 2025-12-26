@@ -6,7 +6,7 @@ from db import get_conn, engine  # Assuming `engine` is your SQLAlchemy engine
 # Config
 # -------------------------------
 
-BOXSCORE_URL = "https://statsapi.web.nhl.com/api/v1/game/{game_id}/boxscore"
+BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
 
 # -------------------------------
 # Helper functions
@@ -113,3 +113,4 @@ def ingest_all_games():
 
 if __name__ == "__main__":
     ingest_all_games()
+ 
